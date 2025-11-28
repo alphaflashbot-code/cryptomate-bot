@@ -32,9 +32,7 @@ try:
 except:
     pass
 
-# --- ГИГАНТСКИЙ СЛОВАРЬ (ЧТОБЫ НЕ БЫЛО ОШИБОК) ---
-# Ключ: Слово пользователя (в верхнем регистре)
-# Значение: Точный технический код BestChange
+# --- ГИГАНТСКИЙ СЛОВАРЬ ---
 CURRENCY_MAP = {
     # --- КРИПТОВАЛЮТЫ ---
     'USDT': 'tether-trc20', 'TRC20': 'tether-trc20', 'ТЕЗЕР': 'tether-trc20', 'TETHER': 'tether-trc20',
@@ -56,7 +54,7 @@ CURRENCY_MAP = {
     'VTB': 'vtb', 'ВТБ': 'vtb',
     'GAZPROM': 'gazprombank', 'ГАЗПРОМ': 'gazprombank',
     'RAIF': 'raiffeisen', 'РАЙФ': 'raiffeisen',
-    'SBP': 'sbp', 'СБП': 'sbp', # Система быстрых платежей
+    'SBP': 'sbp', 'СБП': 'sbp',
     
     # --- БАНКИ УКРАИНЫ ---
     'MONO': 'monobank', 'МОНО': 'monobank', 'MONOBANK': 'monobank',
@@ -69,8 +67,6 @@ CURRENCY_MAP = {
     'HALYK': 'halyk-bank', 'ХАЛЫК': 'halyk-bank',
 
     # --- ОБЩИЕ ВАЛЮТЫ (GENERIC) ---
-    # Если человек пишет просто "Рубль", мы помечаем это как GENERIC,
-    # и дальше смотрим на метод (Нал или Карта)
     'RUB': 'GENERIC_RUB', 'РУБ': 'GENERIC_RUB', 'РУБЛЬ': 'GENERIC_RUB', 'RUR': 'GENERIC_RUB',
     'UAH': 'GENERIC_UAH', 'ГРН': 'GENERIC_UAH', 'ГРИВНА': 'GENERIC_UAH',
     'KZT': 'GENERIC_KZT', 'ТЕНГЕ': 'GENERIC_KZT',
@@ -108,43 +104,36 @@ def get_method_keyboard(prefix):
         [InlineKeyboardButton(text="🪙 Криптовалюта", callback_data=f"{prefix}_crypto")]
     ])
 
-# --- УМНЫЙ РЕЗОЛВЕР КОДОВ (САМАЯ ВАЖНАЯ ЧАСТЬ) ---
+# --- УМНЫЙ РЕЗОЛВЕР КОДОВ ---
 def resolve_bestchange_code(user_word, method):
     word = user_word.upper()
-    
-    # 1. Ищем в словаре
     code = CURRENCY_MAP.get(word)
     
-    # Если слова нет в словаре, но оно похоже на крипту, пробуем угадать
     if not code:
         if word in ['USDC']: return 'usd-coin'
         if word in ['DAI']: return 'dai'
-        # Если совсем не знаем слово, возвращаем None (ошибка)
         return None
 
-    # 2. Если это конкретный банк (например, sberbank), метод не важен, возвращаем его
     if code not in ['GENERIC_RUB', 'GENERIC_UAH', 'GENERIC_KZT', 'GENERIC_USD', 'GENERIC_EUR']:
         return code
 
-    # 3. Если это GENERIC (Общее название), смотрим на метод (Нал/Карта)
-    
     # === РУБЛИ ===
     if code == 'GENERIC_RUB':
         if method == 'cash': return 'cash-rub'
-        if method == 'card': return 'sberbank' # Дефолт для карт РФ
+        if method == 'card': return 'sberbank'
         return 'sberbank'
 
     # === ГРИВНЫ ===
     if code == 'GENERIC_UAH':
         if method == 'cash': return 'cash-uah'
-        if method == 'card': return 'visa-mastercard-uah' # Дефолт для карт Украины
+        if method == 'card': return 'visa-mastercard-uah'
         return 'visa-mastercard-uah'
 
     # === ДОЛЛАРЫ ===
     if code == 'GENERIC_USD':
         if method == 'cash': return 'cash-usd'
         if method == 'card': return 'visa-mastercard-usd'
-        return 'tether-trc20' # Если выбрали крипту
+        return 'tether-trc20'
 
     # === ЕВРО ===
     if code == 'GENERIC_EUR':
@@ -154,13 +143,12 @@ def resolve_bestchange_code(user_word, method):
 
     # === ТЕНГЕ ===
     if code == 'GENERIC_KZT':
-        if method == 'cash': return 'cash-kzt' # Редкость, но бывает
+        if method == 'cash': return 'cash-kzt'
         if method == 'card': return 'visa-mastercard-kzt'
         return 'visa-mastercard-kzt'
 
     return code
 
-# --- БИНАНС ---
 async def get_binance_price(coin):
     symbol = coin.upper().replace(" ", "")
     if not symbol.endswith("USDT"): symbol += "USDT"
@@ -240,18 +228,15 @@ async def exchange_finish_city(message: types.Message, state: FSMContext):
     await show_final_result(message, data, message.text.strip())
     await state.clear()
 
-# --- ФУНКЦИЯ ПОКАЗА РЕЗУЛЬТАТА ---
 async def show_final_result(message, data, city):
     give_raw = data['give_raw']
     get_raw = data['get_raw']
     m_give = data['method_give']
     m_get = data['method_get']
     
-    # 1. Получаем точные коды BestChange
     code_give = resolve_bestchange_code(give_raw, m_give)
     code_get = resolve_bestchange_code(get_raw, m_get)
     
-    # 2. Проверка на ошибки (если слово не найдено)
     if not code_give or not code_get:
         await message.answer(
             f"⚠️ Ошибка: Я не понял валюту `{give_raw}` или `{get_raw}`.\n"
@@ -260,14 +245,12 @@ async def show_final_result(message, data, city):
         )
         return
 
-    # 3. Формируем ссылку
     if code_give == code_get:
         link = "https://www.bestchange.ru/"
     else:
         link = f"https://www.bestchange.ru/{code_give}-to-{code_get}.html"
         
     rows = []
-    # Кнопка BestChange
     rows.append([InlineKeyboardButton(text=f"🟢 {code_give} -> {code_get}", url=link)])
     
     is_online = city.lower() in ['онлайн', 'online', 'интернет']
@@ -330,11 +313,17 @@ async def start_web_server():
     runner = web.AppRunner(app); await runner.setup()
     port = int(os.getenv("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port); await site.start()
+
+# ВОТ ЗДЕСЬ Я ИСПРАВИЛ ОШИБКУ:
 async def keep_alive():
     while True:
         await asyncio.sleep(600)
-        try: async with ClientSession() as session: async with session.get(APP_URL) as response: pass
-        except: pass
+        try:
+            async with ClientSession() as session:
+                async with session.get(APP_URL) as response:
+                    pass
+        except:
+            pass
 
 async def main():
     if not BOT_TOKEN: return
