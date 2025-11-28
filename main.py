@@ -2,7 +2,7 @@ import os
 import asyncio
 import logging
 import sys
-from aiohttp import web # Добавили библиотеку для "сайта"
+from aiohttp import web, ClientSession # Добавили ClientSession для пинга
 
 # Библиотеки бота
 from aiogram import Bot, Dispatcher, types, F
@@ -12,17 +12,17 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 import google.generativeai as genai
 
-# --- НАСТРОЙКИ ---
+# --- ВАЖНО: АДРЕС ТВОЕГО БОТА (из логов Render) ---
+APP_URL = "https://cryptomate-bot-59m4.onrender.com"
+# --------------------------------------------------
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# --- ИНИЦИАЛИЗАЦИЯ ---
 dp = Dispatcher()
-
+bot = None
 if BOT_TOKEN:
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
-else:
-    bot = None
 
 # --- ГЕМИНИ ---
 try:
@@ -41,18 +41,17 @@ main_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# --- ЛОГИКА БОТА ---
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    await message.answer(f"Привет, {message.from_user.first_name}! Я CryptoMate 🤖", reply_markup=main_keyboard)
+    await message.answer(f"Привет! Я CryptoMate 🤖. Я не сплю!", reply_markup=main_keyboard)
 
 @dp.message(F.text == "💱 Обменник")
 async def exchange(message: types.Message):
-    await message.answer("🛠 Раздел Обменник в разработке.")
+    await message.answer("🛠 Скоро будет.")
 
 @dp.message(F.text == "🏆 Топ бирж")
 async def top_exchanges(message: types.Message):
-    await message.answer("🔥 Топ бирж:\n1. Bybit\n2. BingX\n3. OKX")
+    await message.answer("🔥 Bybit, BingX, OKX")
 
 @dp.message()
 async def ai_chat(message: types.Message):
@@ -60,35 +59,47 @@ async def ai_chat(message: types.Message):
         await bot.send_chat_action(chat_id=message.chat.id, action="typing")
         response = model.generate_content(message.text)
         await message.answer(response.text)
-    except Exception as e:
-        await message.answer("Ошибка ИИ или сети.")
+    except:
+        await message.answer("Ошибка ИИ.")
 
-# --- ФУНКЦИЯ-ОБМАНКА ДЛЯ RENDER (Keep-Alive) ---
+# --- ВЕБ-СЕРВЕР ---
 async def health_check(request):
-    return web.Response(text="Бот работает нормально!")
+    return web.Response(text="Бот работает и не спит!")
 
 async def start_web_server():
-    # Создаем маленький веб-сервер
     app = web.Application()
     app.router.add_get('/', health_check)
     runner = web.AppRunner(app)
     await runner.setup()
-    # Render сам скажет, какой порт использовать (обычно 10000)
     port = int(os.getenv("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
-    print(f"✅ Веб-сервер запущен на порту {port} (Render доволен)")
+    print(f"✅ Веб-сервер запущен на порту {port}")
 
-# --- ГЛАВНЫЙ ЗАПУСК ---
+# --- БУДИЛЬНИК (PING) ---
+async def keep_alive():
+    while True:
+        await asyncio.sleep(600) # Ждем 10 минут
+        try:
+            async with ClientSession() as session:
+                async with session.get(APP_URL) as response:
+                    print(f"⏰ ПИНГ САМОГО СЕБЯ: Статус {response.status}")
+        except Exception as e:
+            print(f"⚠️ Ошибка пинга: {e}")
+
+# --- ЗАПУСК ---
 async def main():
     if not BOT_TOKEN:
         print("❌ Нет токена!")
         return
 
-    # 1. Запускаем обманку
+    # 1. Запускаем сервер
     await start_web_server()
     
-    # 2. Запускаем бота
+    # 2. Запускаем "Будильник" в фоне
+    asyncio.create_task(keep_alive())
+    
+    # 3. Запускаем бота
     print("✅ Бот запущен!")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
