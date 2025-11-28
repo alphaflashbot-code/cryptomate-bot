@@ -2,41 +2,35 @@ import os
 import asyncio
 import logging
 import sys
+from aiohttp import web # Добавили библиотеку для "сайта"
 
-# Библиотеки
+# Библиотеки бота
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
-
 import google.generativeai as genai
 
-# --- ПОЛУЧАЕМ КЛЮЧИ ИЗ НАСТРОЕК СЕРВЕРА (RENDER) ---
-# Бот сам заберет их из безопасного хранилища Render
+# --- НАСТРОЙКИ ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Проверка, что ключи загрузились
-if not BOT_TOKEN or not GEMINI_API_KEY:
-    print("❌ ОШИБКА: Ключи не найдены! Проверь Environment Variables на Render.")
-    # Не выходим, чтобы бот не падал в цикле перезагрузки, но пишем ошибку
-    
-# --- НАСТРОЙКА GEMINI ---
+# --- ИНИЦИАЛИЗАЦИЯ ---
+dp = Dispatcher()
+
+if BOT_TOKEN:
+    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
+else:
+    bot = None
+
+# --- ГЕМИНИ ---
 try:
     if GEMINI_API_KEY:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    print(f"Ошибка настройки Gemini: {e}")
-
-# --- НАСТРОЙКА БОТА ---
-dp = Dispatcher()
-# Если токена нет, бот не запустится, но код не упадет сразу
-if BOT_TOKEN:
-    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
-else:
-    print("⚠️ Бот не инициализирован (нет токена)")
+except:
+    pass
 
 # --- МЕНЮ ---
 main_keyboard = ReplyKeyboardMarkup(
@@ -47,13 +41,10 @@ main_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# --- ЛОГИКА ---
+# --- ЛОГИКА БОТА ---
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
-    await message.answer(
-        f"Привет, {message.from_user.first_name}! Я CryptoMate 🤖\nЯ работаю в облаке 24/7!", 
-        reply_markup=main_keyboard
-    )
+    await message.answer(f"Привет, {message.from_user.first_name}! Я CryptoMate 🤖", reply_markup=main_keyboard)
 
 @dp.message(F.text == "💱 Обменник")
 async def exchange(message: types.Message):
@@ -65,24 +56,40 @@ async def top_exchanges(message: types.Message):
 
 @dp.message()
 async def ai_chat(message: types.Message):
-    if not GEMINI_API_KEY:
-        await message.answer("⚠️ ИИ пока не настроен.")
-        return
-        
     try:
         await bot.send_chat_action(chat_id=message.chat.id, action="typing")
         response = model.generate_content(message.text)
         await message.answer(response.text)
     except Exception as e:
-        await message.answer(f"Ошибка ИИ: {e}")
+        await message.answer("Ошибка ИИ или сети.")
 
-# --- ЗАПУСК ---
+# --- ФУНКЦИЯ-ОБМАНКА ДЛЯ RENDER (Keep-Alive) ---
+async def health_check(request):
+    return web.Response(text="Бот работает нормально!")
+
+async def start_web_server():
+    # Создаем маленький веб-сервер
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    # Render сам скажет, какой порт использовать (обычно 10000)
+    port = int(os.getenv("PORT", 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    print(f"✅ Веб-сервер запущен на порту {port} (Render доволен)")
+
+# --- ГЛАВНЫЙ ЗАПУСК ---
 async def main():
     if not BOT_TOKEN:
-        print("⛔️ Стоп: Нет токена бота.")
+        print("❌ Нет токена!")
         return
-        
-    print("✅ Бот запущен на сервере Render!")
+
+    # 1. Запускаем обманку
+    await start_web_server()
+    
+    # 2. Запускаем бота
+    print("✅ Бот запущен!")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
