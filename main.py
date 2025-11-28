@@ -32,31 +32,24 @@ try:
 except:
     pass
 
-# --- СЛОВАРЬ ВАЛЮТ (БАЗОВЫЙ) ---
-# Здесь мы просто сопоставляем слово пользователя с типом валюты
+# --- СЛОВАРЬ ВАЛЮТ ---
 CURRENCY_MAP = {
-    # Рубли
     'RUB': 'rub', 'РУБ': 'rub', 'РУБЛЬ': 'rub', 'RUR': 'rub', 'СБЕР': 'rub', 'ТИНЬКОФФ': 'rub',
-    # Гривны
     'UAH': 'uah', 'ГРН': 'uah', 'ГРИВНА': 'uah', 'МОНО': 'uah', 'ПРИВАТ': 'uah',
-    # Доллары (Фиат)
     'USD': 'usd', 'ДОЛЛАР': 'usd', 'БАКИ': 'usd',
-    # Евро
     'EUR': 'eur', 'ЕВРО': 'eur',
-    # Тенге
     'KZT': 'kzt', 'ТЕНГЕ': 'kzt', 'КАСПИ': 'kzt',
-    # Крипта (ей все равно на нал/безнал, код всегда один)
     'USDT': 'tether-trc20', 'TRC20': 'tether-trc20', 'ТЕЗЕР': 'tether-trc20',
     'BTC': 'bitcoin', 'БИТОК': 'bitcoin',
-    'ETH': 'ethereum', 'ЭФИР': 'ethereum',
-    'TON': 'toncoin', 'LTC': 'litecoin'
+    'ETH': 'ethereum', 'TON': 'toncoin', 'LTC': 'litecoin'
 }
 
-# --- МАШИНА СОСТОЯНИЙ ---
+# --- СОСТОЯНИЯ ---
 class BotStates(StatesGroup):
-    exchange_pair = State()   # Ждем текст пары
-    exchange_method = State() # Ждем нажатие кнопки (Нал/Карта)
-    exchange_city = State()   # Ждем город
+    exchange_pair = State()
+    exchange_method_give = State() # Чем платим?
+    exchange_method_get = State()  # Что получаем?
+    exchange_city = State()
     crypto_price_wait = State()
 
 # --- КЛАВИАТУРЫ ---
@@ -74,35 +67,32 @@ cancel_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# Клавиатура выбора метода
-method_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-    [InlineKeyboardButton(text="💳 Карта / Банк / Онлайн", callback_data="method_card")],
-    [InlineKeyboardButton(text="💵 Наличные (Cash)", callback_data="method_cash")],
-    [InlineKeyboardButton(text="🪙 Это Криптовалюта", callback_data="method_crypto")]
-])
+def get_method_keyboard(prefix):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Карта / Банк / Онлайн", callback_data=f"{prefix}_card")],
+        [InlineKeyboardButton(text="💵 Наличные (Cash)", callback_data=f"{prefix}_cash")],
+        [InlineKeyboardButton(text="🪙 Криптовалюта", callback_data=f"{prefix}_crypto")]
+    ])
 
-# --- ЛОГИКА КОДОВ BESTCHANGE ---
+# --- ЛОГИКА КОДОВ ---
 def resolve_code(currency_raw, method):
-    # 1. Нормализуем название валюты через словарь
     cur = currency_raw.upper()
-    code_base = CURRENCY_MAP.get(cur, cur.lower()) # Если нет в словаре, берем как есть
+    code_base = CURRENCY_MAP.get(cur, cur.lower()) 
     
-    # 2. Если это КРИПТА (уже имеет сложный код типа tether-trc20), метод не важен
-    if '-' in code_base or code_base in ['bitcoin', 'ethereum', 'toncoin', 'litecoin', 'monero']:
+    # Крипта всегда имеет свой код
+    if '-' in code_base or code_base in ['bitcoin', 'ethereum', 'toncoin', 'litecoin', 'monero', 'tether-trc20']:
         return code_base
 
-    # 3. Применяем метод (Нал или Карта)
+    # Применяем метод
     if method == 'cash':
-        # Для нала добавляем cash-
-        return f"cash-{code_base}"
+        return f"cash-{code_base}" # cash-usd, cash-uah
     
     elif method == 'card':
-        # Для карт выбираем самые популярные банки по умолчанию
-        if code_base == 'rub': return 'sberbank' # Дефолт для РФ
-        if code_base == 'uah': return 'visa-mastercard-uah' # Дефолт для Украины
+        if code_base == 'rub': return 'sberbank'
+        if code_base == 'uah': return 'visa-mastercard-uah'
         if code_base == 'kzt': return 'visa-mastercard-kzt'
         if code_base == 'usd': return 'visa-mastercard-usd'
-        return code_base # Если не знаем, оставляем как есть
+        return code_base
         
     return code_base
 
@@ -123,50 +113,63 @@ async def get_binance_price(coin):
 # ЛОГИКА ОБМЕННИКА (ШАГИ)
 # =================================================
 
-# 1. СТАРТ: Просим пару
+# 1. СТАРТ
 @dp.message(F.text == "💱 Обменник")
 async def exchange_start(message: types.Message, state: FSMContext):
     await message.answer(
         "🔄 **Новая заявка**\n\n"
-        "Напиши пару (просто названия валют).\n"
-        "Примеры: `Гривна USDT` или `Рубль Биткоин`", 
+        "Напиши пару (две валюты через пробел).\n"
+        "Пример: `UAH USD` или `Рубль Биткоин`", 
         reply_markup=cancel_keyboard
     )
     await state.set_state(BotStates.exchange_pair)
 
-# 2. ПОЛУЧАЕМ ПАРУ -> ПРОСИМ МЕТОД
+# 2. ПАРА -> ВОПРОС 1 (ЧЕМ ПЛАТИМ?)
 @dp.message(BotStates.exchange_pair)
 async def exchange_get_pair(message: types.Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
     
-    # Пытаемся разбить текст на 2 слова
     words = re.findall(r'\w+', message.text)
     if len(words) < 2:
-        await message.answer("⚠️ Нужно написать две валюты через пробел. Попробуй еще раз (например: UAH USDT).")
+        await message.answer("⚠️ Напиши две валюты через пробел (например: UAH USD).")
         return
 
-    # Сохраняем "сырые" слова
     await state.update_data(give_raw=words[0], get_raw=words[1])
     
-    # Спрашиваем метод для ПЕРВОЙ валюты
+    # Спрашиваем про ПЕРВУЮ валюту
     await message.answer(
-        f"💳 Как вы отдаете **{words[0].upper()}**?", 
-        reply_markup=method_keyboard
+        f"➡️ Как вы отдаете **{words[0].upper()}**?", 
+        reply_markup=get_method_keyboard("give")
     )
-    await state.set_state(BotStates.exchange_method)
+    await state.set_state(BotStates.exchange_method_give)
 
-# 3. ПОЛУЧАЕМ МЕТОД (Кнопка) -> ПРОСИМ ГОРОД
-@dp.callback_query(F.data.startswith("method_"), BotStates.exchange_method)
-async def exchange_save_method(callback: types.CallbackQuery, state: FSMContext):
-    method = callback.data.split("_")[1] # cash, card или crypto
-    await state.update_data(method=method)
+# 3. ОТВЕТ 1 -> ВОПРОС 2 (КУДА ПОЛУЧАЕМ?)
+@dp.callback_query(F.data.startswith("give_"), BotStates.exchange_method_give)
+async def exchange_save_give(callback: types.CallbackQuery, state: FSMContext):
+    method = callback.data.split("_")[1] # cash, card, crypto
+    await state.update_data(method_give=method)
+    
+    data = await state.get_data()
+    # Спрашиваем про ВТОРУЮ валюту
+    await callback.message.answer(
+        f"⬅️ Куда вы хотите получить **{data['get_raw'].upper()}**?", 
+        reply_markup=get_method_keyboard("get")
+    )
+    await state.set_state(BotStates.exchange_method_get)
+    await callback.answer()
+
+# 4. ОТВЕТ 2 -> ГОРОД
+@dp.callback_query(F.data.startswith("get_"), BotStates.exchange_method_get)
+async def exchange_save_get(callback: types.CallbackQuery, state: FSMContext):
+    method = callback.data.split("_")[1]
+    await state.update_data(method_get=method)
     
     await callback.message.answer("🏙 **В каком городе вы находитесь?**\n(Напиши `Москва`, `Варшава` или `Онлайн`)", reply_markup=cancel_keyboard)
     await state.set_state(BotStates.exchange_city)
     await callback.answer()
 
-# 4. ФИНАЛ: ГЕНЕРИРУЕМ ССЫЛКУ
+# 5. ФИНАЛ
 @dp.message(BotStates.exchange_city)
 async def exchange_finish(message: types.Message, state: FSMContext):
     if message.text == "❌ Отмена":
@@ -175,23 +178,13 @@ async def exchange_finish(message: types.Message, state: FSMContext):
     data = await state.get_data()
     city = message.text.strip()
     
-    # Достаем данные
+    # Данные
     give_raw = data['give_raw']
     get_raw = data['get_raw']
-    method = data['method'] # cash, card, crypto
     
-    # Генерируем коды BestChange
-    code_give = resolve_code(give_raw, method)
-    
-    # Для второй валюты метод обычно такой же или "карта", если это онлайн.
-    # Но для простоты вторую валюту берем как Крипту или Карту по умолчанию,
-    # если пользователь не написал "Нал" явно во втором слове.
-    # (Упрощенная логика для стабильности ссылки)
-    code_get = resolve_code(get_raw, 'crypto' if method == 'crypto' else 'card')
-    
-    # Если пользователь выбрал "Нал" для первой, а вторая - USD, то вторая скорее всего тоже Нал
-    if method == 'cash' and 'cash' not in code_get and code_get in ['usd', 'eur', 'rub']:
-         code_get = f"cash-{code_get}"
+    # Генерируем коды с учетом того, что выбрал пользователь
+    code_give = resolve_code(give_raw, data['method_give'])
+    code_get = resolve_code(get_raw, data['method_get'])
 
     # Ссылка
     if code_give == code_get:
@@ -199,12 +192,10 @@ async def exchange_finish(message: types.Message, state: FSMContext):
     else:
         final_link = f"https://www.bestchange.ru/{code_give}-to-{code_get}.html"
         
-    # Кнопки
-    is_online = city.lower() in ['онлайн', 'online', 'интернет']
     rows = []
+    rows.append([InlineKeyboardButton(text="🟢 Открыть BestChange", url=final_link)])
     
-    rows.append([InlineKeyboardButton(text="🟢 Открыть обменники (BestChange)", url=final_link)])
-    
+    is_online = city.lower() in ['онлайн', 'online', 'интернет']
     if is_online:
         rows.append([InlineKeyboardButton(text="🟡 Bybit P2P", url="https://www.bybit.com/fiat/trade/otc")])
     else:
@@ -213,18 +204,18 @@ async def exchange_finish(message: types.Message, state: FSMContext):
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
     
-    pair_display = f"{give_raw.upper()} -> {get_raw.upper()}"
-    method_display = "Наличные" if method == 'cash' else "Карта/Банк"
+    # Красивое описание
+    m_give = "Нал" if data['method_give'] == 'cash' else "Карта"
+    m_get = "Нал" if data['method_get'] == 'cash' else "Карта"
     
     await message.answer(
-        f"🔎 **Пара:** `{pair_display}`\n"
-        f"💳 **Метод:** {method_display}\n"
-        f"📍 **Локация:** `{city}`\n\n"
+        f"🔎 **Заявка:** `{give_raw.upper()}` ({m_give}) -> `{get_raw.upper()}` ({m_get})\n"
+        f"📍 **Город:** `{city}`\n\n"
         "👇 Результат поиска:", 
         reply_markup=keyboard
     )
     
-    await message.answer("Меню:", reply_markup=main_keyboard)
+    await message.answer("Главное меню:", reply_markup=main_keyboard)
     await state.clear()
 
 # =================================================
