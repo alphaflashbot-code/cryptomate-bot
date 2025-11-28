@@ -32,7 +32,7 @@ try:
 except:
     pass
 
-# --- СЛОВАРЬ ВАЛЮТ (СИНОНИМЫ) ---
+# --- СЛОВАРЬ ВАЛЮТ ---
 CURRENCY_MAP = {
     # КРИПТА
     'USDT': 'tether-trc20', 'TRC20': 'tether-trc20', 'ТЕЗЕР': 'tether-trc20',
@@ -42,7 +42,7 @@ CURRENCY_MAP = {
     'LTC': 'litecoin', 'TON': 'toncoin', 'XMR': 'monero',
     'DOGE': 'dogecoin', 'SOL': 'solana', 'TRX': 'tron',
 
-    # ФИАТ ОБЩИЙ
+    # ФИАТ
     'USD': 'GENERIC_USD', 'ДОЛЛАР': 'GENERIC_USD',
     'EUR': 'GENERIC_EUR', 'ЕВРО': 'GENERIC_EUR',
     'RUB': 'GENERIC_RUB', 'РУБ': 'GENERIC_RUB', 'РУБЛЬ': 'GENERIC_RUB',
@@ -50,8 +50,8 @@ CURRENCY_MAP = {
     'KZT': 'GENERIC_KZT', 'ТЕНГЕ': 'GENERIC_KZT',
     'AED': 'GENERIC_AED', 'ДИРХАМ': 'GENERIC_AED', 'DIRHAM': 'GENERIC_AED',
     'TRY': 'GENERIC_TRY', 'LIRA': 'GENERIC_TRY', 'ЛИРА': 'GENERIC_TRY',
-    'PLN': 'GENERIC_PLN', 'ZLOTY': 'GENERIC_PLN', 'ЗЛОТЫЙ': 'GENERIC_PLN',
-    'GBP': 'GENERIC_GBP', 'POUND': 'GENERIC_GBP', 'ФУНТ': 'GENERIC_GBP',
+    'PLN': 'GENERIC_PLN', 'ZLOTY': 'GENERIC_PLN',
+    'GBP': 'GENERIC_GBP', 'POUND': 'GENERIC_GBP',
     'GEL': 'GENERIC_GEL', 'ЛАРИ': 'GENERIC_GEL',
 
     # БАНКИ
@@ -90,7 +90,7 @@ def get_method_keyboard(prefix):
         [InlineKeyboardButton(text="🪙 Криптовалюта", callback_data=f"{prefix}_crypto")]
     ])
 
-# --- ИСПРАВЛЕННЫЙ РЕЗОЛВЕР КОДОВ (OFFICIAL BESTCHANGE CODES) ---
+# --- РЕЗОЛВЕР ---
 def resolve_bestchange_code(user_word, method):
     word = user_word.upper()
     code = CURRENCY_MAP.get(word)
@@ -99,25 +99,22 @@ def resolve_bestchange_code(user_word, method):
         if word in ['USDC']: return 'usd-coin'
         return None
 
-    # Если это уже готовый код банка или крипты
     if not code.startswith('GENERIC_'):
         return code
 
-    # === НАЛИЧНЫЕ (ИСПРАВЛЕННЫЕ КОДЫ) ===
     if method == 'cash':
-        if code == 'GENERIC_USD': return 'dollar-cash'     # Было cash-usd (ошибка), стало dollar-cash
-        if code == 'GENERIC_EUR': return 'euro-cash'       # euro-cash
-        if code == 'GENERIC_RUB': return 'ruble-cash'      # ruble-cash
-        if code == 'GENERIC_UAH': return 'hryvna-cash'     # hryvna-cash
-        if code == 'GENERIC_AED': return 'dirham'          # dirham (Правильный код для ОАЭ)
-        if code == 'GENERIC_TRY': return 'lira'            # lira
-        if code == 'GENERIC_PLN': return 'zloty'           # zloty
-        if code == 'GENERIC_GBP': return 'pound'           # pound
+        if code == 'GENERIC_USD': return 'dollar-cash'
+        if code == 'GENERIC_EUR': return 'euro-cash'
+        if code == 'GENERIC_RUB': return 'ruble-cash'
+        if code == 'GENERIC_UAH': return 'hryvna-cash'
+        if code == 'GENERIC_AED': return 'dirham'
+        if code == 'GENERIC_TRY': return 'lira'
+        if code == 'GENERIC_PLN': return 'zloty'
+        if code == 'GENERIC_GBP': return 'pound'
         if code == 'GENERIC_KZT': return 'tenge-cash'
         if code == 'GENERIC_GEL': return 'gel'
-        return 'dollar-cash' # Дефолт
+        return 'dollar-cash'
 
-    # === КАРТЫ (БЕЗНАЛ) ===
     if method == 'card':
         if code == 'GENERIC_USD': return 'visa-mastercard-usd'
         if code == 'GENERIC_EUR': return 'visa-mastercard-eur'
@@ -125,8 +122,7 @@ def resolve_bestchange_code(user_word, method):
         if code == 'GENERIC_UAH': return 'visa-mastercard-uah'
         if code == 'GENERIC_KZT': return 'visa-mastercard-kzt'
         if code == 'GENERIC_TRY': return 'visa-mastercard-try'
-        # Карты AED/GEL/PLN на BestChange редки, но попробуем
-        if code == 'GENERIC_AED': return 'visa-mastercard-aed' 
+        if code == 'GENERIC_AED': return 'visa-mastercard-aed'
         return 'visa-mastercard-usd'
 
     return 'tether-trc20'
@@ -145,12 +141,12 @@ async def get_binance_price(coin):
     except: return None
 
 # =================================================
-# ЛОГИКА ОБМЕННИКА
+# ЛОГИКА
 # =================================================
 
 @dp.message(F.text == "💱 Обменник")
 async def exchange_start(message: types.Message, state: FSMContext):
-    await message.answer("🔄 **Новая заявка**\n\nНапиши пару (например: `AED USD` или `RUB BTC`).", reply_markup=cancel_keyboard)
+    await message.answer("🔄 **Новая заявка**\n\nНапиши пару (например: `AED USD`).", reply_markup=cancel_keyboard)
     await state.set_state(BotStates.exchange_pair)
 
 @dp.message(BotStates.exchange_pair)
@@ -180,12 +176,11 @@ async def exchange_save_get(callback: types.CallbackQuery, state: FSMContext):
     await state.update_data(method_get=method_get)
     data = await state.get_data()
     m_give = data['method_give']
-    
     if m_give != 'cash' and method_get != 'cash':
         await show_final_result(callback.message, data, "Онлайн")
         await state.clear()
     else:
-        await callback.message.answer("🏙 **Город?**\n(Например: `Дубай`, `Москва`)", reply_markup=cancel_keyboard)
+        await callback.message.answer("🏙 **Город?**\n(Например: `Дубай`)", reply_markup=cancel_keyboard)
         await state.set_state(BotStates.exchange_city)
     await callback.answer()
 
@@ -207,7 +202,7 @@ async def show_final_result(message, data, city):
     code_get = resolve_bestchange_code(get_raw, m_get)
     
     if not code_give or not code_get:
-        await message.answer(f"⚠️ Ошибка: не понял валюту.", reply_markup=main_keyboard)
+        await message.answer(f"⚠️ Ошибка: Я не понял валюту.", reply_markup=main_keyboard)
         return
 
     if code_give == code_get:
@@ -217,8 +212,6 @@ async def show_final_result(message, data, city):
         
     rows = []
     rows.append([InlineKeyboardButton(text="🟢 Открыть BestChange", url=link)])
-    
-    # Кнопка запасная
     rows.append([InlineKeyboardButton(text="📋 Список вручную", url="https://www.bestchange.ru/list.html")])
     
     if city.lower() in ['онлайн', 'online', 'интернет']:
@@ -229,21 +222,13 @@ async def show_final_result(message, data, city):
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
     
-    # ОТЛАДКА ДЛЯ ТЕБЯ:
-    debug_text = f"`{code_give}` -> `{code_get}`"
-    
     await message.answer(
         f"🔎 **Пара:** `{give_raw.upper()}` -> `{get_raw.upper()}`\n"
-        f"📍 **Локация:** `{city}`\n"
-        f"🔧 **Код:** {debug_text}\n\n"
-        "👇 Результат:", 
+        f"📍 **Локация:** `{city}`\n\n"
+        "👇 Результат поиска:", 
         reply_markup=keyboard
     )
     await message.answer("Меню:", reply_markup=main_keyboard)
-
-# =================================================
-# ОСТАЛЬНОЕ
-# =================================================
 
 @dp.message(F.text == "🪙 Курс криптовалют")
 async def crypto_rates_start(message: types.Message, state: FSMContext):
@@ -284,11 +269,18 @@ async def start_web_server():
     runner = web.AppRunner(app); await runner.setup()
     port = int(os.getenv("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port); await site.start()
+
+# --- ВОТ ТУТ БЫЛА ОШИБКА, ТЕПЕРЬ ИСПРАВЛЕНО ---
 async def keep_alive():
     while True:
         await asyncio.sleep(600)
-        try: async with ClientSession() as session: async with session.get(APP_URL) as response: pass
-        except: pass
+        try:
+            async with ClientSession() as session:
+                async with session.get(APP_URL) as response:
+                    pass
+        except:
+            pass
+# -----------------------------------------------
 
 async def main():
     if not BOT_TOKEN: return
