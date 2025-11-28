@@ -15,10 +15,8 @@ from aiogram.fsm.state import State, StatesGroup
 
 import google.generativeai as genai
 
-# --- URL ДЛЯ БУДИЛЬНИКА ---
-APP_URL = "https://cryptomate-bot-59m4.onrender.com"
-
 # --- НАСТРОЙКИ ---
+APP_URL = "https://cryptomate-bot-59m4.onrender.com" # Твоя ссылка
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -35,16 +33,20 @@ try:
 except:
     pass
 
-# --- СОСТОЯНИЯ ---
-class ExchangeSteps(StatesGroup):
-    waiting_for_pair = State()
-    waiting_for_city = State()
+# --- МАШИНА СОСТОЯНИЙ ---
+class BotStates(StatesGroup):
+    # Для обменника
+    exchange_pair = State()
+    exchange_city = State()
+    # Для курса крипты
+    crypto_price_wait = State()
 
 # --- КЛАВИАТУРЫ ---
 main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="💱 Обменник"), KeyboardButton(text="🏆 Топ бирж")],
-        [KeyboardButton(text="🧠 Крипто-ИИ")]
+        [KeyboardButton(text="💵 Курс валют"), KeyboardButton(text="🪙 Курс криптовалют")],
+        [KeyboardButton(text="📈 Рынок Live"), KeyboardButton(text="🧠 Крипто-ИИ")]
     ],
     resize_keyboard=True
 )
@@ -54,118 +56,144 @@ cancel_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# --- ФУНКЦИЯ: ПОЛУЧЕНИЕ ЦЕНЫ С BINANCE ---
-async def get_crypto_price(pair_text):
-    # Пытаемся привести текст к формату биржи (например "BTC USDT" -> "BTCUSDT")
-    symbol = pair_text.upper().replace(" ", "").replace("/", "")
+# --- ФУНКЦИЯ: ЦЕНА С BINANCE (Только для Крипты) ---
+async def get_binance_price(coin):
+    # Добавляем USDT к названию, если пользователь не написал
+    symbol = coin.upper().replace(" ", "")
+    if not symbol.endswith("USDT"):
+        symbol += "USDT"
     
-    # Binance API (бесплатный, ключи не нужны)
     url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
-    
     try:
         async with ClientSession() as session:
             async with session.get(url) as response:
                 if response.status == 200:
                     data = await response.json()
-                    price = float(data['price'])
-                    # Красиво форматируем цену
-                    return f"{price:,.2f}" 
-                else:
-                    return None # Не нашли такую пару
+                    return float(data['price'])
+                return None
     except:
         return None
 
-# --- ЛОГИКА БОТА ---
+# =================================================
+# ЛОГИКА 1: ОБМЕННИК (Любая пара + Город)
+# =================================================
 
-@dp.message(CommandStart())
-async def cmd_start(message: types.Message):
-    await message.answer(f"Привет! Я CryptoMate 🤖. Работаю на реальных данных!", reply_markup=main_keyboard)
-
-# 1. СТАРТ ОБМЕНА
 @dp.message(F.text == "💱 Обменник")
 async def exchange_start(message: types.Message, state: FSMContext):
     await message.answer(
-        "🔄 **Поиск выгодного курса**\n\n"
-        "Напиши пару тикеров через пробел.\n"
-        "Примеры: `BTC USDT`, `ETH BTC`, `TON USDT`",
+        "🔄 **Подбор обменника**\n\n"
+        "Напиши, что на что меняем.\n"
+        "Пример: `Сбербанк RUB на BTC` или `Наличные USD на USDT`",
         reply_markup=cancel_keyboard
     )
-    await state.set_state(ExchangeSteps.waiting_for_pair)
+    await state.set_state(BotStates.exchange_pair)
 
-# 2. ПОЛУЧАЕМ ПАРУ
-@dp.message(ExchangeSteps.waiting_for_pair)
+@dp.message(BotStates.exchange_pair)
 async def exchange_get_pair(message: types.Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer("Отменено.", reply_markup=main_keyboard)
         return
 
-    # Запоминаем пару
     await state.update_data(pair=message.text)
-    
-    await message.answer(
-        "🏙 Введи **Город** (или напиши 'Карта', 'Сбер', 'Тинькофф' для онлайна):",
-        reply_markup=cancel_keyboard
-    )
-    await state.set_state(ExchangeSteps.waiting_for_city)
+    await message.answer("🏙 В каком городе (или напиши 'Онлайн')?", reply_markup=cancel_keyboard)
+    await state.set_state(BotStates.exchange_city)
 
-# 3. ФИНАЛ: ВЫДАЕМ РЕЗУЛЬТАТ
-@dp.message(ExchangeSteps.waiting_for_city)
+@dp.message(BotStates.exchange_city)
 async def exchange_finish(message: types.Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await state.clear()
         await message.answer("Отменено.", reply_markup=main_keyboard)
         return
 
-    user_data = await state.get_data()
-    pair_raw = user_data['pair']
+    data = await state.get_data()
+    pair = data['pair']
     city = message.text
 
-    await message.answer(f"🔎 Сканирую рынок для **{pair_raw}** ({city})...")
-
-    # 1. Пытаемся узнать реальную биржевую цену
-    real_price = await get_crypto_price(pair_raw)
-
-    if real_price:
-        price_text = f"📈 **Биржевой курс:** `{real_price}`"
-        note = "ℹ️ _В обменниках курс обычно отличается на 1-3%_"
-    else:
-        price_text = "⚠️ Биржевой курс не найден (возможно, редкая пара)."
-        note = ""
-
-    # 2. Формируем "Умную ссылку" на BestChange (поиск)
-    # Мы не можем парсить BestChange напрямую (защита), но можем отправить человека туда
-    search_link = "https://www.bestchange.ru/" 
-
-    # Кнопка ссылки
-    keyboard_inline = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔎 Найти на BestChange", url=search_link)]
-    ])
-
-    result_text = (
-        f"✅ **Результат для {pair_raw}**\n\n"
-        f"{price_text}\n"
-        f"{note}\n\n"
-        f"📍 Локация: {city}\n"
-        f"👇 Жми кнопку ниже, чтобы увидеть список продавцов:"
+    # Тут мы даем ссылки на агрегаторы, так как они работают с ЛЮБЫМИ парами
+    text = (
+        f"🔎 **Заявка принята!**\n"
+        f"Обмен: `{pair}`\n"
+        f"Место: `{city}`\n\n"
+        f"✅ **Где можно совершить этот обмен прямо сейчас:**\n\n"
+        f"1. **BestChange** (Агрегатор №1) — [Найти предложения](https://www.bestchange.ru/)\n"
+        f"2. **Bybit P2P** (Гарантия биржи) — [Перейти](https://www.bybit.com/fiat/trade/otc)\n"
+        f"3. **Telegram Wallet** (Быстро) — @wallet\n\n"
+        f"⚠️ _Всегда проверяйте отзывы перед отправкой средств!_"
     )
     
-    await message.answer(result_text, reply_markup=keyboard_inline)
-    await message.answer("Готово! Что делаем дальше?", reply_markup=main_keyboard) # Возвращаем главное меню
+    await message.answer(text, reply_markup=main_keyboard, disable_web_page_preview=True)
+    await state.clear()
+
+# =================================================
+# ЛОГИКА 2: КУРС КРИПТОВАЛЮТ (Через Binance)
+# =================================================
+
+@dp.message(F.text == "🪙 Курс криптовалют")
+async def crypto_rates_start(message: types.Message, state: FSMContext):
+    await message.answer(
+        "🪙 **Проверка стоимости**\n\n"
+        "Напиши название монеты (тикер).\n"
+        "Пример: `BTC`, `ETH`, `NOT`, `TON`",
+        reply_markup=cancel_keyboard
+    )
+    await state.set_state(BotStates.crypto_price_wait)
+
+@dp.message(BotStates.crypto_price_wait)
+async def crypto_rates_result(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear()
+        await message.answer("Отменено.", reply_markup=main_keyboard)
+        return
+
+    coin = message.text.upper()
+    await message.answer(f"🔎 Узнаю курс для **{coin}**...")
+
+    price = await get_binance_price(coin)
+
+    if price:
+        # Красивое форматирование цены
+        if price < 1:
+            price_str = f"{price:.6f}" # Для дешевых монет типа PEPE
+        else:
+            price_str = f"{price:,.2f}" # Для дорогих типа BTC
+
+        await message.answer(
+            f"📊 **Курс {coin}/USDT:**\n"
+            f"💰 `{price_str} $`",
+            reply_markup=main_keyboard
+        )
+    else:
+        await message.answer(
+            f"⚠️ Не нашел монету **{coin}** на бирже.\n"
+            f"Попробуй написать тикер точнее (например BTC).",
+            reply_markup=main_keyboard
+        )
     
     await state.clear()
 
-# --- ОСТАЛЬНЫЕ КНОПКИ ---
+# =================================================
+# ОСТАЛЬНОЕ
+# =================================================
+
+@dp.message(CommandStart())
+async def cmd_start(message: types.Message):
+    await message.answer(f"Привет! Я CryptoMate 🤖.", reply_markup=main_keyboard)
+
 @dp.message(F.text == "🏆 Топ бирж")
 async def top_exchanges(message: types.Message):
-    # Сюда вставь СВОИ реферальные ссылки
-    text = (
-        "🔥 **ТОП БИРЖ (Проверено)**\n\n"
-        "1. 🟡 **Bybit** — [Бонусы до $30,000](https://www.bybit.com)\n"
-        "2. 🔵 **BingX** — [Без KYC](https://bingx.com)\n"
-        "3. ⚫️ **OKX** — [Надежность](https://okx.com)\n"
+    await message.answer(
+        "🔥 **ТОП БИРЖ:**\n\n"
+        "1. 🟡 **Bybit** — [Регистрация](https://www.bybit.com)\n"
+        "2. 🔵 **BingX** — [Регистрация](https://bingx.com)\n"
+        "3. ⚫️ **OKX** — [Регистрация](https://okx.com)",
+        disable_web_page_preview=True
     )
-    await message.answer(text, disable_web_page_preview=True)
+
+# Заглушки для кнопок, которые еще не сделали
+@dp.message(F.text.in_({"💵 Курс валют", "📈 Рынок Live"}))
+async def development(message: types.Message):
+    await message.answer("🛠 Этот раздел скоро появится!")
 
 @dp.message()
 async def ai_chat(message: types.Message):
@@ -176,28 +204,21 @@ async def ai_chat(message: types.Message):
     except:
         pass
 
-# --- СЕРВЕР И PING ---
-async def health_check(request):
-    return web.Response(text="OK")
-
+# --- СЕРВЕР И PING (ЧТОБЫ РАБОТАЛ НА RENDER) ---
+async def health_check(request): return web.Response(text="OK")
 async def start_web_server():
-    app = web.Application()
-    app.router.add_get('/', health_check)
-    runner = web.AppRunner(app)
-    await runner.setup()
+    app = web.Application(); app.router.add_get('/', health_check)
+    runner = web.AppRunner(app); await runner.setup()
     port = int(os.getenv("PORT", 8080))
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
+    site = web.TCPSite(runner, '0.0.0.0', port); await site.start()
 
 async def keep_alive():
     while True:
         await asyncio.sleep(600)
         try:
             async with ClientSession() as session:
-                async with session.get(APP_URL) as response:
-                    pass
-        except:
-            pass
+                async with session.get(APP_URL) as response: pass
+        except: pass
 
 async def main():
     if not BOT_TOKEN: return
