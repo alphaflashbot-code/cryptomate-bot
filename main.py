@@ -197,4 +197,61 @@ async def exchange_finish(message: types.Message, state: FSMContext):
 # ОСТАЛЬНОЕ
 # =================================================
 
-@dp.message(F.text == "🪙 Кур
+@dp.message(F.text == "🪙 Курс криптовалют")
+async def crypto_rates_start(message: types.Message, state: FSMContext):
+    await message.answer("🪙 Введи тикер (BTC, ETH, TON):", reply_markup=cancel_keyboard)
+    await state.set_state(BotStates.crypto_price_wait)
+
+@dp.message(BotStates.crypto_price_wait)
+async def crypto_rates_result(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
+    coin = message.text.upper()
+    price = await get_binance_price(coin)
+    if price:
+        await message.answer(f"📊 **{coin}/USDT:** `{price:,.2f} $`", reply_markup=main_keyboard)
+    else:
+        await message.answer("⚠️ Не нашел. Попробуй тикер (например BTC).", reply_markup=main_keyboard)
+    await state.clear()
+
+@dp.message(CommandStart())
+async def cmd_start(message: types.Message):
+    await message.answer(f"Привет! Я CryptoMate 🤖.", reply_markup=main_keyboard)
+
+@dp.message(F.text == "🏆 Топ бирж")
+async def top_exchanges(message: types.Message):
+    await message.answer("🔥 Bybit, BingX, OKX (твои ссылки)")
+
+@dp.message()
+async def ai_chat(message: types.Message):
+    try:
+        await bot.send_chat_action(chat_id=message.chat.id, action="typing")
+        response = model.generate_content(message.text)
+        await message.answer(response.text)
+    except: pass
+
+async def health_check(request): return web.Response(text="OK")
+async def start_web_server():
+    app = web.Application(); app.router.add_get('/', health_check)
+    runner = web.AppRunner(app); await runner.setup()
+    port = int(os.getenv("PORT", 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port); await site.start()
+
+async def keep_alive():
+    while True:
+        await asyncio.sleep(600)
+        try:
+            async with ClientSession() as session:
+                async with session.get(APP_URL) as response: pass
+        except: pass
+
+async def main():
+    if not BOT_TOKEN: return
+    await start_web_server()
+    asyncio.create_task(keep_alive())
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+    asyncio.run(main())
