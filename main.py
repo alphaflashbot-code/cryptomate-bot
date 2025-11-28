@@ -20,6 +20,12 @@ APP_URL = "https://cryptomate-bot-59m4.onrender.com"
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
+# --- ТВОИ РЕФЕРАЛКИ ---
+REF_BESTCHANGE = "?p=1337426" # Твой ID
+REF_BYBIT = "https://www.bybit.com/invite?ref=KAB7WYP"
+REF_BINGX = "https://bingx.com/invite/DZ92UK/"
+REF_OKX = "https://okx.com" # (Если будет, добавим сюда)
+
 dp = Dispatcher()
 bot = None
 if BOT_TOKEN:
@@ -146,7 +152,7 @@ async def get_binance_price(coin):
 
 @dp.message(F.text == "💱 Обменник")
 async def exchange_start(message: types.Message, state: FSMContext):
-    await message.answer("🔄 **Новая заявка**\n\nНапиши пару (например: `AED USD`).", reply_markup=cancel_keyboard)
+    await message.answer("🔄 **Новая заявка**\n\nНапиши пару (например: `AED USD` или `UAH USDT`).", reply_markup=cancel_keyboard)
     await state.set_state(BotStates.exchange_pair)
 
 @dp.message(BotStates.exchange_pair)
@@ -205,14 +211,16 @@ async def show_final_result(message, data, city):
         await message.answer(f"⚠️ Ошибка: Я не понял валюту.", reply_markup=main_keyboard)
         return
 
+    # --- ССЫЛКИ С РЕФЕРАЛКОЙ ---
     if code_give == code_get:
-        link = "https://www.bestchange.ru/"
+        link = f"https://www.bestchange.ru/{REF_BESTCHANGE}"
     else:
-        link = f"https://www.bestchange.ru/{code_give}-to-{code_get}.html"
+        link = f"https://www.bestchange.ru/{code_give}-to-{code_get}.html{REF_BESTCHANGE}"
         
     rows = []
     rows.append([InlineKeyboardButton(text="🟢 Открыть BestChange", url=link)])
-    rows.append([InlineKeyboardButton(text="📋 Список вручную", url="https://www.bestchange.ru/list.html")])
+    # Сюда тоже добавляем рефку
+    rows.append([InlineKeyboardButton(text="📋 Список вручную", url=f"https://www.bestchange.ru/list.html{REF_BESTCHANGE}")])
     
     if city.lower() in ['онлайн', 'online', 'интернет']:
         rows.append([InlineKeyboardButton(text="🟡 Bybit P2P", url="https://www.bybit.com/fiat/trade/otc")])
@@ -224,11 +232,26 @@ async def show_final_result(message, data, city):
     
     await message.answer(
         f"🔎 **Пара:** `{give_raw.upper()}` -> `{get_raw.upper()}`\n"
-        f"📍 **Локация:** `{city}`\n\n"
+        f"📍 **Локация:** `{city}`\n"
         "👇 Результат поиска:", 
         reply_markup=keyboard
     )
     await message.answer("Меню:", reply_markup=main_keyboard)
+
+@dp.message(F.text == "🏆 Топ бирж")
+async def top_exchanges(message: types.Message):
+    # ТУТ ТВОИ РЕФЕРАЛЬНЫЕ ССЫЛКИ
+    text = (
+        "🔥 **ТОП БИРЖ (Проверено)**\n\n"
+        f"1. 🟡 **Bybit** — [Бонусы до $30,000]({REF_BYBIT})\n"
+        f"2. 🔵 **BingX** — [Без KYC]({REF_BINGX})\n"
+        f"3. ⚫️ **OKX** — [Надежность]({REF_OKX})"
+    )
+    await message.answer(text, disable_web_page_preview=True)
+
+# =================================================
+# ОСТАЛЬНОЕ
+# =================================================
 
 @dp.message(F.text == "🪙 Курс криптовалют")
 async def crypto_rates_start(message: types.Message, state: FSMContext):
@@ -251,10 +274,6 @@ async def crypto_rates_result(message: types.Message, state: FSMContext):
 async def cmd_start(message: types.Message):
     await message.answer(f"Привет! Я CryptoMate 🤖.", reply_markup=main_keyboard)
 
-@dp.message(F.text == "🏆 Топ бирж")
-async def top_exchanges(message: types.Message):
-    await message.answer("🔥 Bybit, BingX, OKX")
-
 @dp.message()
 async def ai_chat(message: types.Message):
     try:
@@ -270,7 +289,7 @@ async def start_web_server():
     port = int(os.getenv("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port); await site.start()
 
-# --- ВОТ ТУТ БЫЛА ОШИБКА, ТЕПЕРЬ ИСПРАВЛЕНО ---
+# --- ИСПРАВЛЕННЫЙ PING ---
 async def keep_alive():
     while True:
         await asyncio.sleep(600)
@@ -280,7 +299,6 @@ async def keep_alive():
                     pass
         except:
             pass
-# -----------------------------------------------
 
 async def main():
     if not BOT_TOKEN: return
