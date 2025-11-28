@@ -47,8 +47,8 @@ CURRENCY_MAP = {
 # --- СОСТОЯНИЯ ---
 class BotStates(StatesGroup):
     exchange_pair = State()
-    exchange_method_give = State() # Чем платим?
-    exchange_method_get = State()  # Что получаем?
+    exchange_method_give = State()
+    exchange_method_get = State()
     exchange_city = State()
     crypto_price_wait = State()
 
@@ -79,13 +79,11 @@ def resolve_code(currency_raw, method):
     cur = currency_raw.upper()
     code_base = CURRENCY_MAP.get(cur, cur.lower()) 
     
-    # Крипта всегда имеет свой код
     if '-' in code_base or code_base in ['bitcoin', 'ethereum', 'toncoin', 'litecoin', 'monero', 'tether-trc20']:
         return code_base
 
-    # Применяем метод
     if method == 'cash':
-        return f"cash-{code_base}" # cash-usd, cash-uah
+        return f"cash-{code_base}"
     
     elif method == 'card':
         if code_base == 'rub': return 'sberbank'
@@ -95,6 +93,41 @@ def resolve_code(currency_raw, method):
         return code_base
         
     return code_base
+
+# --- ФУНКЦИЯ ПОКАЗА РЕЗУЛЬТАТА (ЧТОБЫ НЕ ДУБЛИРОВАТЬ КОД) ---
+async def show_result(message, give_raw, get_raw, m_give, m_get, city):
+    # Генерируем коды
+    code_give = resolve_code(give_raw, m_give)
+    code_get = resolve_code(get_raw, m_get)
+
+    # Ссылка
+    if code_give == code_get:
+        final_link = "https://www.bestchange.ru/"
+    else:
+        final_link = f"https://www.bestchange.ru/{code_give}-to-{code_get}.html"
+        
+    rows = []
+    rows.append([InlineKeyboardButton(text="🟢 Открыть BestChange", url=final_link)])
+    
+    # Если это онлайн - даем P2P, если город - карту
+    is_online = city.lower() in ['онлайн', 'online', 'интернет']
+    if is_online:
+        rows.append([InlineKeyboardButton(text="🟡 Bybit P2P", url="https://www.bybit.com/fiat/trade/otc")])
+    else:
+        maps_url = f"https://www.google.com/maps/search/crypto+exchange+{city}"
+        rows.append([InlineKeyboardButton(text=f"📍 Карта обменников ({city})", url=maps_url)])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
+    
+    # Красивое описание
+    dict_names = {'cash': 'Нал', 'card': 'Карта', 'crypto': 'Крипта'}
+    
+    await message.answer(
+        f"🔎 **Заявка:** `{give_raw.upper()}` ({dict_names.get(m_give)}) -> `{get_raw.upper()}` ({dict_names.get(m_get)})\n"
+        f"📍 **Локация:** `{city}`\n\n"
+        "👇 Результат поиска:", 
+        reply_markup=keyboard
+    )
 
 async def get_binance_price(coin):
     symbol = coin.upper().replace(" ", "")
@@ -113,18 +146,11 @@ async def get_binance_price(coin):
 # ЛОГИКА ОБМЕННИКА (ШАГИ)
 # =================================================
 
-# 1. СТАРТ
 @dp.message(F.text == "💱 Обменник")
 async def exchange_start(message: types.Message, state: FSMContext):
-    await message.answer(
-        "🔄 **Новая заявка**\n\n"
-        "Напиши пару (две валюты через пробел).\n"
-        "Пример: `UAH USD` или `Рубль Биткоин`", 
-        reply_markup=cancel_keyboard
-    )
+    await message.answer("🔄 **Новая заявка**\n\nНапиши пару (например: `UAH USDT`).", reply_markup=cancel_keyboard)
     await state.set_state(BotStates.exchange_pair)
 
-# 2. ПАРА -> ВОПРОС 1 (ЧЕМ ПЛАТИМ?)
 @dp.message(BotStates.exchange_pair)
 async def exchange_get_pair(message: types.Message, state: FSMContext):
     if message.text == "❌ Отмена":
@@ -132,89 +158,52 @@ async def exchange_get_pair(message: types.Message, state: FSMContext):
     
     words = re.findall(r'\w+', message.text)
     if len(words) < 2:
-        await message.answer("⚠️ Напиши две валюты через пробел (например: UAH USD).")
+        await message.answer("⚠️ Напиши две валюты через пробел.")
         return
 
     await state.update_data(give_raw=words[0], get_raw=words[1])
-    
-    # Спрашиваем про ПЕРВУЮ валюту
-    await message.answer(
-        f"➡️ Как вы отдаете **{words[0].upper()}**?", 
-        reply_markup=get_method_keyboard("give")
-    )
+    await message.answer(f"➡️ Как отдаете **{words[0].upper()}**?", reply_markup=get_method_keyboard("give"))
     await state.set_state(BotStates.exchange_method_give)
 
-# 3. ОТВЕТ 1 -> ВОПРОС 2 (КУДА ПОЛУЧАЕМ?)
 @dp.callback_query(F.data.startswith("give_"), BotStates.exchange_method_give)
 async def exchange_save_give(callback: types.CallbackQuery, state: FSMContext):
-    method = callback.data.split("_")[1] # cash, card, crypto
+    method = callback.data.split("_")[1]
     await state.update_data(method_give=method)
-    
     data = await state.get_data()
-    # Спрашиваем про ВТОРУЮ валюту
-    await callback.message.answer(
-        f"⬅️ Куда вы хотите получить **{data['get_raw'].upper()}**?", 
-        reply_markup=get_method_keyboard("get")
-    )
+    await callback.message.answer(f"⬅️ Куда принимаете **{data['get_raw'].upper()}**?", reply_markup=get_method_keyboard("get"))
     await state.set_state(BotStates.exchange_method_get)
     await callback.answer()
 
-# 4. ОТВЕТ 2 -> ГОРОД
+# === ЗДЕСЬ ИЗМЕНЕНИЯ (УМНЫЙ ПРОПУСК ГОРОДА) ===
 @dp.callback_query(F.data.startswith("get_"), BotStates.exchange_method_get)
 async def exchange_save_get(callback: types.CallbackQuery, state: FSMContext):
-    method = callback.data.split("_")[1]
-    await state.update_data(method_get=method)
+    method_get = callback.data.split("_")[1]
+    await state.update_data(method_get=method_get)
     
-    await callback.message.answer("🏙 **В каком городе вы находитесь?**\n(Напиши `Москва`, `Варшава` или `Онлайн`)", reply_markup=cancel_keyboard)
-    await state.set_state(BotStates.exchange_city)
+    # Получаем то, что выбрали на прошлом шаге
+    data = await state.get_data()
+    method_give = data['method_give']
+    
+    # ЛОГИКА: Если нигде нет "cash" (нала) - значит это Онлайн!
+    if method_give != 'cash' and method_get != 'cash':
+        # Сразу показываем результат, город "Онлайн"
+        await show_result(callback.message, data['give_raw'], data['get_raw'], method_give, method_get, "Онлайн")
+        await callback.message.answer("Главное меню:", reply_markup=main_keyboard)
+        await state.clear()
+    else:
+        # Если есть Нал - спрашиваем город
+        await callback.message.answer("🏙 **В каком городе вы находитесь?**\n(Например: `Москва`)", reply_markup=cancel_keyboard)
+        await state.set_state(BotStates.exchange_city)
+    
     await callback.answer()
 
-# 5. ФИНАЛ
 @dp.message(BotStates.exchange_city)
-async def exchange_finish(message: types.Message, state: FSMContext):
+async def exchange_finish_city(message: types.Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
 
     data = await state.get_data()
-    city = message.text.strip()
-    
-    # Данные
-    give_raw = data['give_raw']
-    get_raw = data['get_raw']
-    
-    # Генерируем коды с учетом того, что выбрал пользователь
-    code_give = resolve_code(give_raw, data['method_give'])
-    code_get = resolve_code(get_raw, data['method_get'])
-
-    # Ссылка
-    if code_give == code_get:
-        final_link = "https://www.bestchange.ru/"
-    else:
-        final_link = f"https://www.bestchange.ru/{code_give}-to-{code_get}.html"
-        
-    rows = []
-    rows.append([InlineKeyboardButton(text="🟢 Открыть BestChange", url=final_link)])
-    
-    is_online = city.lower() in ['онлайн', 'online', 'интернет']
-    if is_online:
-        rows.append([InlineKeyboardButton(text="🟡 Bybit P2P", url="https://www.bybit.com/fiat/trade/otc")])
-    else:
-        maps_url = f"https://www.google.com/maps/search/crypto+exchange+{city}"
-        rows.append([InlineKeyboardButton(text=f"📍 Карта обменников ({city})", url=maps_url)])
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
-    
-    # Красивое описание
-    m_give = "Нал" if data['method_give'] == 'cash' else "Карта"
-    m_get = "Нал" if data['method_get'] == 'cash' else "Карта"
-    
-    await message.answer(
-        f"🔎 **Заявка:** `{give_raw.upper()}` ({m_give}) -> `{get_raw.upper()}` ({m_get})\n"
-        f"📍 **Город:** `{city}`\n\n"
-        "👇 Результат поиска:", 
-        reply_markup=keyboard
-    )
-    
+    await show_result(message, data['give_raw'], data['get_raw'], data['method_give'], data['method_get'], message.text.strip())
     await message.answer("Главное меню:", reply_markup=main_keyboard)
     await state.clear()
 
