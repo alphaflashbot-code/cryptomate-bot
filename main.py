@@ -2,9 +2,9 @@ import os
 import asyncio
 import logging
 import sys
+import re # Для обработки текста
 from aiohttp import web, ClientSession
 
-# Библиотеки бота
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
@@ -32,6 +32,39 @@ try:
 except:
     pass
 
+# --- СЛОВАРЬ BESTCHANGE (ПЕРЕВОДЧИК) ---
+# Бот ищет эти слова в тексте пользователя и превращает их в коды ссылки
+BESTCHANGE_CODES = {
+    # Крипта
+    'BTC': 'bitcoin', 'БИТКОИН': 'bitcoin', 'BITCOIN': 'bitcoin',
+    'ETH': 'ethereum', 'ЭФИР': 'ethereum', 'ETHER': 'ethereum',
+    'USDT': 'tether-trc20', 'TEZER': 'tether-trc20', 'ТЕЗЕР': 'tether-trc20', # По умолчанию TRC20 (самый частый)
+    'ERC20': 'tether-erc20',
+    'TON': 'toncoin', 'ТОН': 'toncoin',
+    'LTC': 'litecoin', 'ЛАЙТ': 'litecoin',
+    'XMR': 'monero', 'МОНЕРО': 'monero',
+    'DOGE': 'dogecoin',
+    'TRX': 'tron', 'ТРОН': 'tron',
+    
+    # Банки РФ
+    'SBER': 'sberbank', 'СБЕР': 'sberbank',
+    'TINKOFF': 'tinkoff', 'ТИНЬКОФФ': 'tinkoff', 'ТИНЬКА': 'tinkoff',
+    'ALFA': 'alfabank', 'АЛЬФА': 'alfabank',
+    'VTB': 'vtb', 'ВТБ': 'vtb',
+    'RUB': 'sberbank', 'РУБЛЬ': 'sberbank', 'РУБ': 'sberbank', # Если пишут просто РУБ, предлагаем Сбер как самый частый
+    'CARD': 'visa-mastercard-rub', 'КАРТА': 'visa-mastercard-rub',
+    'SBP': 'sbp', 'СБП': 'sbp',
+    
+    # Банки Украины
+    'MONO': 'monobank', 'МОНО': 'monobank',
+    'PRIVAT': 'privat24-uah', 'ПРИВАТ': 'privat24-uah',
+    'UAH': 'monobank', 'ГРИВНА': 'monobank', # По дефолту Моно
+    
+    # Наличные (Города)
+    'CASH': 'cash-usd', 'НАЛ': 'cash-usd', 'НАЛИЧНЫЕ': 'cash-usd',
+    'USD': 'cash-usd', 'ДОЛЛАР': 'cash-usd'
+}
+
 class BotStates(StatesGroup):
     exchange_pair = State()
     exchange_city = State()
@@ -51,7 +84,32 @@ cancel_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-# --- BINANCE PRICE ---
+# --- ФУНКЦИЯ ГЕНЕРАЦИИ ССЫЛКИ ---
+def get_smart_link(user_text):
+    # Разбиваем текст на слова, убираем лишнее, переводим в верхний регистр
+    # Пример: "BTC на Сбер" -> ['BTC', 'СБЕР']
+    words = re.findall(r'\w+', user_text.upper())
+    
+    found_codes = []
+    
+    for word in words:
+        if word in BESTCHANGE_CODES:
+            found_codes.append(BESTCHANGE_CODES[word])
+            
+    # Если нашли ровно 2 кода (Откуда -> Куда), делаем прямую ссылку
+    if len(found_codes) >= 2:
+        # Берем первый и последний код (на случай если слов больше)
+        give = found_codes[0]
+        get = found_codes[-1]
+        
+        # Если коды одинаковые (Сбер -> Сбер), то ссылка не нужна
+        if give == get: return "https://www.bestchange.ru/"
+        
+        return f"https://www.bestchange.ru/{give}-to-{get}.html"
+    
+    # Если не поняли пару, возвращаем главную
+    return "https://www.bestchange.ru/"
+
 async def get_binance_price(coin):
     symbol = coin.upper().replace(" ", "")
     if not symbol.endswith("USDT"): symbol += "USDT"
@@ -66,12 +124,21 @@ async def get_binance_price(coin):
     except: return None
 
 # =================================================
-# ЛОГИКА ОБМЕННИКА (УМНАЯ)
+# ЛОГИКА ОБМЕННИКА
 # =================================================
 
 @dp.message(F.text == "💱 Обменник")
 async def exchange_start(message: types.Message, state: FSMContext):
-    await message.answer("🔄 **Что меняем?**\n(Например: `USDT на Наличные USD` или `RUB на BTC`)", reply_markup=cancel_keyboard)
+    await message.answer(
+        "🔄 **Подбор пары**\n\n"
+        "Напиши пару ключевыми словами (через пробел).\n"
+        "Примеры:\n"
+        "🔸 `BTC Сбер`\n"
+        "🔸 `USDT Тинькофф`\n"
+        "🔸 `ETH Наличные`\n"
+        "🔸 `Моно Тон`", 
+        reply_markup=cancel_keyboard
+    )
     await state.set_state(BotStates.exchange_pair)
 
 @dp.message(BotStates.exchange_pair)
@@ -80,7 +147,7 @@ async def exchange_get_pair(message: types.Message, state: FSMContext):
         await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
     
     await state.update_data(pair=message.text)
-    await message.answer("🏙 **Где нужен обмен?**\n\nНапиши **Название города** (для наличных)\nИли напиши **Онлайн** (для карт/банков).", reply_markup=cancel_keyboard)
+    await message.answer("🏙 **Город?**\n(Напиши `Москва`, `Варшава` или `Онлайн`)", reply_markup=cancel_keyboard)
     await state.set_state(BotStates.exchange_city)
 
 @dp.message(BotStates.exchange_city)
@@ -89,96 +156,45 @@ async def exchange_finish(message: types.Message, state: FSMContext):
         await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
 
     data = await state.get_data()
-    pair = data['pair']
-    city_raw = message.text.strip()
+    pair_text = data['pair']
+    city = message.text.strip()
     
-    # Проверяем, хочет ли человек наличные или онлайн
-    is_online = city_raw.lower() in ['онлайн', 'online', 'интернет', 'internet', 'сбер', 'тинькофф', 'карта']
+    # Генерируем УМНУЮ ссылку
+    smart_link = get_smart_link(pair_text)
     
-    # Формируем клавиатуру (кнопки)
+    is_online = city.lower() in ['онлайн', 'online', 'интернет']
     rows = []
     
-    if is_online:
-        # Если Онлайн -> Даем P2P и агрегаторы
-        text_result = f"💻 **Подборка для онлайн обмена:**\nПара: `{pair}`"
-        rows.append([InlineKeyboardButton(text="🟢 BestChange (Все обменники)", url="https://www.bestchange.ru/")])
-        rows.append([InlineKeyboardButton(text="🟡 Bybit P2P (Без комиссий)", url="https://www.bybit.com/fiat/trade/otc")])
-        rows.append([InlineKeyboardButton(text="🔵 Telegram Wallet", url="https://t.me/wallet")])
+    # Кнопка BestChange (теперь умная)
+    if smart_link == "https://www.bestchange.ru/":
+        btn_text = "🟢 Выбрать вручную на BestChange"
     else:
-        # Если Город -> Генерируем ссылку на Карту этого города!
-        text_result = f"🏙 **Обмен наличных в г. {city_raw}**\nПара: `{pair}`"
-        
-        # Ссылка на Google Maps с поиском "Криптообменник + Город"
-        maps_url = f"https://www.google.com/maps/search/crypto+exchange+{city_raw}"
-        
-        rows.append([InlineKeyboardButton(text=f"📍 Открыть карту обменников ({city_raw})", url=maps_url)])
-        rows.append([InlineKeyboardButton(text="🟢 Найти курс на BestChange", url="https://www.bestchange.ru/")])
+        btn_text = f"🟢 Курсы {pair_text.upper()} (BestChange)"
+    
+    rows.append([InlineKeyboardButton(text=btn_text, url=smart_link)])
+    
+    if is_online:
+        rows.append([InlineKeyboardButton(text="🟡 Bybit P2P", url="https://www.bybit.com/fiat/trade/otc")])
+    else:
+        # Для наличных добавляем карту
+        maps_url = f"https://www.google.com/maps/search/crypto+exchange+{city}"
+        rows.append([InlineKeyboardButton(text=f"📍 Карта обменников ({city})", url=maps_url)])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
     
-    await message.answer(text_result, reply_markup=keyboard)
-    await message.answer("Если нужно что-то еще — выбери в меню 👇", reply_markup=main_keyboard)
+    await message.answer(
+        f"🔎 **Результат для:** `{pair_text}`\n"
+        f"📍 Локация: `{city}`\n\n"
+        "Я сформировал прямую ссылку на лучшие курсы:", 
+        reply_markup=keyboard
+    )
+    
+    # Возвращаем меню
+    await message.answer("Главное меню:", reply_markup=main_keyboard)
     await state.clear()
 
 # =================================================
-# ОСТАЛЬНОЕ (БЕЗ ИЗМЕНЕНИЙ)
+# ОСТАЛЬНОЕ
 # =================================================
 
-@dp.message(F.text == "🪙 Курс криптовалют")
-async def crypto_rates_start(message: types.Message, state: FSMContext):
-    await message.answer("🪙 Введи тикер монеты (BTC, ETH, SOL):", reply_markup=cancel_keyboard)
-    await state.set_state(BotStates.crypto_price_wait)
-
-@dp.message(BotStates.crypto_price_wait)
-async def crypto_rates_result(message: types.Message, state: FSMContext):
-    if message.text == "❌ Отмена":
-        await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
-    coin = message.text.upper()
-    price = await get_binance_price(coin)
-    if price:
-        await message.answer(f"📊 **{coin}/USDT:** `{price:,.2f} $`", reply_markup=main_keyboard)
-    else:
-        await message.answer("⚠️ Не нашел такую монету.", reply_markup=main_keyboard)
-    await state.clear()
-
-@dp.message(CommandStart())
-async def cmd_start(message: types.Message):
-    await message.answer(f"Привет! Я CryptoMate 🤖.", reply_markup=main_keyboard)
-
-@dp.message(F.text == "🏆 Топ бирж")
-async def top_exchanges(message: types.Message):
-    await message.answer("🔥 Bybit, BingX, OKX (твои ссылки)")
-
-@dp.message()
-async def ai_chat(message: types.Message):
-    try:
-        await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-        response = model.generate_content(message.text)
-        await message.answer(response.text)
-    except: pass
-
-async def health_check(request): return web.Response(text="OK")
-async def start_web_server():
-    app = web.Application(); app.router.add_get('/', health_check)
-    runner = web.AppRunner(app); await runner.setup()
-    port = int(os.getenv("PORT", 8080))
-    site = web.TCPSite(runner, '0.0.0.0', port); await site.start()
-
-async def keep_alive():
-    while True:
-        await asyncio.sleep(600)
-        try:
-            async with ClientSession() as session:
-                async with session.get(APP_URL) as response: pass
-        except: pass
-
-async def main():
-    if not BOT_TOKEN: return
-    await start_web_server()
-    asyncio.create_task(keep_alive())
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
-
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, stream=sys.stdout)
-    asyncio.run(main())
+@dp.message(F.text == "🪙 Кур
