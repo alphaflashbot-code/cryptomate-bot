@@ -40,15 +40,12 @@ except:
 
 # --- СЛОВАРЬ ВАЛЮТ ---
 CURRENCY_MAP = {
-    # КРИПТА
     'USDT': 'tether-trc20', 'TRC20': 'tether-trc20', 'ТЕЗЕР': 'tether-trc20',
     'ERC20': 'tether-erc20',
     'BTC': 'bitcoin', 'BITCOIN': 'bitcoin', 'БИТОК': 'bitcoin',
     'ETH': 'ethereum', 'ЭФИР': 'ethereum',
     'LTC': 'litecoin', 'TON': 'toncoin', 'XMR': 'monero',
     'DOGE': 'dogecoin', 'SOL': 'solana', 'TRX': 'tron',
-
-    # ФИАТ
     'USD': 'GENERIC_USD', 'ДОЛЛАР': 'GENERIC_USD', 'DOL': 'GENERIC_USD', 'BUCKS': 'GENERIC_USD',
     'EUR': 'GENERIC_EUR', 'ЕВРО': 'GENERIC_EUR',
     'RUB': 'GENERIC_RUB', 'РУБ': 'GENERIC_RUB', 'РУБЛЬ': 'GENERIC_RUB',
@@ -60,10 +57,6 @@ CURRENCY_MAP = {
     'GBP': 'GENERIC_GBP', 'POUND': 'GENERIC_GBP', 'ФУНТ': 'GENERIC_GBP',
     'GEL': 'GENERIC_GEL', 'ЛАРИ': 'GENERIC_GEL',
     'CNY': 'GENERIC_CNY', 'YUAN': 'GENERIC_CNY', 'ЮАНЬ': 'GENERIC_CNY',
-    'BYN': 'BYN', 'БЕЛРУБ': 'BYN',
-    'JPY': 'JPY', 'ЙЕНА': 'JPY',
-
-    # БАНКИ
     'SBER': 'sberbank', 'СБЕР': 'sberbank',
     'TINKOFF': 'tinkoff', 'ТИНЬКОФФ': 'tinkoff',
     'MONO': 'monobank', 'МОНО': 'monobank',
@@ -100,15 +93,13 @@ def get_method_keyboard(prefix):
         [InlineKeyboardButton(text="🪙 Криптовалюта", callback_data=f"{prefix}_crypto")]
     ])
 
-# --- РЕЗОЛВЕР BESTCHANGE ---
+# --- ЛОГИКА КОДОВ ---
 def resolve_bestchange_code(user_word, method):
     word = user_word.upper()
     code = CURRENCY_MAP.get(word)
-    
     if not code:
         if word in ['USDC']: return 'usd-coin'
         return None
-
     if not code.startswith('GENERIC_'): return code
 
     if method == 'cash':
@@ -133,12 +124,10 @@ def resolve_bestchange_code(user_word, method):
         if code == 'GENERIC_KZT': return 'visa-mastercard-kzt'
         if code == 'GENERIC_TRY': return 'visa-mastercard-try'
         if code == 'GENERIC_AED': return 'visa-mastercard-aed'
-        if code == 'GENERIC_CNY': return 'alipay'
         return 'visa-mastercard-usd'
-
     return 'tether-trc20'
 
-# --- УНИВЕРСАЛЬНЫЙ ПАРСЕР BINANCE ---
+# --- API HELPERS ---
 async def get_raw_binance_price(symbol):
     url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
     try:
@@ -147,10 +136,8 @@ async def get_raw_binance_price(symbol):
                 if response.status == 200:
                     data = await response.json()
                     return float(data['price'])
-                return None
     except: return None
 
-# --- COINGECKO (РЕЗЕРВ) ---
 async def get_coingecko_price(query):
     try:
         async with ClientSession() as session:
@@ -167,7 +154,6 @@ async def get_coingecko_price(query):
     except: return None, None
     return None, None
 
-# --- FOREX (ФИАТ) ---
 async def get_forex_rate(base, quote):
     url = f"https://open.er-api.com/v6/latest/{base}"
     try:
@@ -180,13 +166,91 @@ async def get_forex_rate(base, quote):
     except: return None
     return None
 
+# --- ФУНКЦИЯ ДЛЯ РЫНОК LIVE (АНАЛИТИКА) ---
+async def get_market_analysis():
+    url = "https://api.binance.com/api/v3/ticker/24hr"
+    try:
+        async with ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status != 200: return "⚠️ Ошибка данных рынка."
+                data = await response.json()
+                
+                # Фильтруем: только USDT пары, объем > 50M (чтобы убрать скам)
+                valid_pairs = [
+                    x for x in data 
+                    if x['symbol'].endswith('USDT') 
+                    and float(x['quoteVolume']) > 50000000 
+                    and not x['symbol'].startswith('USDC')
+                    and not x['symbol'].startswith('FDUSD')
+                ]
+                
+                # Сортируем: Лидеры роста и падения
+                sorted_by_change = sorted(valid_pairs, key=lambda x: float(x['priceChangePercent']), reverse=True)
+                
+                gainers = sorted_by_change[:5]
+                losers = sorted_by_change[-3:]
+                
+                # Находим BTC и ETH для настроения
+                btc = next((x for x in valid_pairs if x['symbol'] == 'BTCUSDT'), None)
+                eth = next((x for x in valid_pairs if x['symbol'] == 'ETHUSDT'), None)
+                
+                # Формируем отчет
+                btc_change = float(btc['priceChangePercent'])
+                mood = "🟢 Бычий (Рост)" if btc_change > 0 else "🔴 Медвежий (Падение)"
+                
+                text = f"📊 **ОБЗОР РЫНКА (24ч)**\n\n"
+                text += f"👑 **BTC:** `{float(btc['lastPrice']):,.0f}$` ({btc_change:+.2f}%)\n"
+                text += f"💎 **ETH:** `{float(eth['lastPrice']):,.0f}$` ({float(eth['priceChangePercent']):+.2f}%)\n"
+                text += f"🌡 **Настроение:** {mood}\n\n"
+                
+                text += "🚀 **ТОП-5 РАКЕТ:**\n"
+                for i, coin in enumerate(gainers, 1):
+                    name = coin['symbol'].replace('USDT', '')
+                    price = float(coin['lastPrice'])
+                    change = float(coin['priceChangePercent'])
+                    text += f"{i}. **{name}**: `{price}$` (+{change:.1f}%)\n"
+                
+                text += "\n🩸 **ТОП-3 ЛУЗЕРА:**\n"
+                for coin in losers:
+                    name = coin['symbol'].replace('USDT', '')
+                    change = float(coin['priceChangePercent'])
+                    text += f"• **{name}**: ({change:.1f}%)\n"
+                    
+                return text
+    except Exception as e:
+        return f"⚠️ Ошибка анализа: {e}"
+
+# =================================================
+# ЛОГИКА 4: РЫНОК LIVE
+# =================================================
+
+@dp.message(F.text == "📈 Рынок Live")
+async def market_live(message: types.Message):
+    await message.answer("🔄 Сканирую рынок... (сек)")
+    # Анимация печати
+    await bot.send_chat_action(chat_id=message.chat.id, action="typing")
+    
+    report = await get_market_analysis()
+    
+    # Добавим кнопку обновить (просто чтобы была)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_market")]])
+    
+    await message.answer(report, reply_markup=kb)
+
+@dp.callback_query(F.data == "refresh_market")
+async def refresh_market_handler(callback: types.CallbackQuery):
+    await callback.message.edit_text("🔄 Обновляю данные...")
+    report = await get_market_analysis()
+    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh_market")]])
+    await callback.message.edit_text(report, reply_markup=kb)
+
 # =================================================
 # ЛОГИКА 1: ОБМЕННИК
 # =================================================
 
 @dp.message(F.text == "💱 Обменник")
 async def exchange_start(message: types.Message, state: FSMContext):
-    await message.answer("🔄 **Новая заявка**\n\nНапиши пару (например: `AED USD` или `UAH USDT`).", reply_markup=cancel_keyboard)
+    await message.answer("🔄 **Новая заявка**\n\nНапиши пару (например: `AED USD`).", reply_markup=cancel_keyboard)
     await state.set_state(BotStates.exchange_pair)
 
 @dp.message(BotStates.exchange_pair)
@@ -245,7 +309,6 @@ async def show_final_result(message, data, city):
         await message.answer(f"⚠️ Ошибка: Я не понял валюту.", reply_markup=main_keyboard)
         return
 
-    # Ссылки с рефкой
     if code_give == code_get:
         link = f"https://www.bestchange.ru/{REF_BESTCHANGE}"
     else:
@@ -272,7 +335,7 @@ async def show_final_result(message, data, city):
     await message.answer("Меню:", reply_markup=main_keyboard)
 
 # =================================================
-# ЛОГИКА 2: КУРС КРИПТОВАЛЮТ
+# ЛОГИКА 2: КУРС КРИПТЫ
 # =================================================
 
 @dp.message(F.text == "🪙 Курс криптовалют")
@@ -284,25 +347,21 @@ async def crypto_rates_start(message: types.Message, state: FSMContext):
 async def crypto_rates_result(message: types.Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
-    
     user_input = message.text.upper()
-    # 1. Binance
     binance_pair = user_input.replace(" ", "") + "USDT"
     price = await get_raw_binance_price(binance_pair)
-    
     if price:
         await message.answer(f"📊 **{user_input}/USDT:** `{price:,.4f} $`", reply_markup=main_keyboard)
     else:
-        # 2. CoinGecko
         p_cg, s_cg = await get_coingecko_price(user_input)
         if p_cg:
             await message.answer(f"🦎 **{s_cg}/USD:** `{p_cg:,.6f} $`", reply_markup=main_keyboard)
         else:
-            await message.answer("⚠️ Не нашел такую крипту.", reply_markup=main_keyboard)
+            await message.answer("⚠️ Не нашел.", reply_markup=main_keyboard)
     await state.clear()
 
 # =================================================
-# ЛОГИКА 3: КУРС ФИАТНЫХ ВАЛЮТ
+# ЛОГИКА 3: КУРС ФИАТА
 # =================================================
 
 @dp.message(F.text == "💵 Курс валют")
@@ -317,17 +376,13 @@ async def fiat_rates_result(message: types.Message, state: FSMContext):
     words = re.findall(r'\w+', message.text.upper())
     if len(words) < 2:
         await message.answer("⚠️ Нужно две валюты.", reply_markup=main_keyboard); return
-
-    base_raw = words[0]; quote_raw = words[1]
-    base = CURRENCY_MAP.get(base_raw, base_raw).replace("GENERIC_", "")
-    quote = CURRENCY_MAP.get(quote_raw, quote_raw).replace("GENERIC_", "")
-
+    base = words[0].replace("GENERIC_", "")
+    quote = words[1].replace("GENERIC_", "")
     rate = await get_forex_rate(base, quote)
-    
     if rate:
-        await message.answer(f"💱 **Курс ЦБ / Forex:**\n1 {base} = **{rate:,.2f}** {quote}", reply_markup=main_keyboard)
+        await message.answer(f"💱 **Курс Forex:**\n1 {base} = **{rate:,.2f}** {quote}", reply_markup=main_keyboard)
     else:
-        await message.answer(f"⚠️ Не нашел курс `{base}` -> `{quote}`.", reply_markup=main_keyboard)
+        await message.answer(f"⚠️ Не нашел курс.", reply_markup=main_keyboard)
     await state.clear()
 
 # =================================================
@@ -363,7 +418,6 @@ async def start_web_server():
     port = int(os.getenv("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port); await site.start()
 
-# --- ИСПРАВЛЕННЫЙ KEEP_ALIVE (РАЗВЕРНУТЫЙ) ---
 async def keep_alive():
     while True:
         await asyncio.sleep(600)
@@ -373,7 +427,6 @@ async def keep_alive():
                     pass
         except:
             pass
-# ---------------------------------------------
 
 async def main():
     if not BOT_TOKEN: return
