@@ -38,44 +38,37 @@ try:
 except:
     pass
 
-# --- СЛОВАРЬ (ДЛЯ ОБМЕННИКА) ---
+# --- СЛОВАРЬ ВАЛЮТ ---
 CURRENCY_MAP = {
+    # КРИПТА
     'USDT': 'tether-trc20', 'TRC20': 'tether-trc20', 'ТЕЗЕР': 'tether-trc20',
     'ERC20': 'tether-erc20',
     'BTC': 'bitcoin', 'BITCOIN': 'bitcoin', 'БИТОК': 'bitcoin',
     'ETH': 'ethereum', 'ЭФИР': 'ethereum',
     'LTC': 'litecoin', 'TON': 'toncoin', 'XMR': 'monero',
     'DOGE': 'dogecoin', 'SOL': 'solana', 'TRX': 'tron',
-    'USD': 'GENERIC_USD', 'ДОЛЛАР': 'GENERIC_USD', 'DOL': 'GENERIC_USD',
+
+    # ФИАТ
+    'USD': 'GENERIC_USD', 'ДОЛЛАР': 'GENERIC_USD', 'DOL': 'GENERIC_USD', 'BUCKS': 'GENERIC_USD',
     'EUR': 'GENERIC_EUR', 'ЕВРО': 'GENERIC_EUR',
     'RUB': 'GENERIC_RUB', 'РУБ': 'GENERIC_RUB', 'РУБЛЬ': 'GENERIC_RUB',
     'UAH': 'GENERIC_UAH', 'ГРН': 'GENERIC_UAH', 'ГРИВНА': 'GENERIC_UAH',
     'KZT': 'GENERIC_KZT', 'ТЕНГЕ': 'GENERIC_KZT',
     'AED': 'GENERIC_AED', 'ДИРХАМ': 'GENERIC_AED',
     'TRY': 'GENERIC_TRY', 'LIRA': 'GENERIC_TRY', 'ЛИРА': 'GENERIC_TRY',
-    'PLN': 'GENERIC_PLN', 'ZLOTY': 'GENERIC_PLN',
-    'GBP': 'GENERIC_GBP', 'POUND': 'GENERIC_GBP',
+    'PLN': 'GENERIC_PLN', 'ZLOTY': 'GENERIC_PLN', 'ЗЛОТЫЙ': 'GENERIC_PLN',
+    'GBP': 'GENERIC_GBP', 'POUND': 'GENERIC_GBP', 'ФУНТ': 'GENERIC_GBP',
     'GEL': 'GENERIC_GEL', 'ЛАРИ': 'GENERIC_GEL',
-    'CNY': 'GENERIC_CNY', 'YUAN': 'GENERIC_CNY',
+    'CNY': 'GENERIC_CNY', 'YUAN': 'GENERIC_CNY', 'ЮАНЬ': 'GENERIC_CNY',
+    'BYN': 'BYN', 'БЕЛРУБ': 'BYN',
+    'JPY': 'JPY', 'ЙЕНА': 'JPY',
+
+    # БАНКИ
     'SBER': 'sberbank', 'СБЕР': 'sberbank',
     'TINKOFF': 'tinkoff', 'ТИНЬКОФФ': 'tinkoff',
     'MONO': 'monobank', 'МОНО': 'monobank',
     'PRIVAT': 'privat24-uah', 'ПРИВАТ': 'privat24-uah',
     'KASPI': 'kaspi-bank', 'КАСПИ': 'kaspi-bank',
-}
-
-# --- СЛОВАРЬ ТИКЕРОВ (ДЛЯ КУРСА КРИПТЫ) ---
-# Помогает боту понять кириллицу перед поиском
-CRYPTO_ALIASES = {
-    'БИТОК': 'BTC', 'БИТКОИН': 'BTC', 'BITCOIN': 'BTC',
-    'ЭФИР': 'ETH', 'ETHER': 'ETH', 'ETHEREUM': 'ETH',
-    'ТОН': 'TON', 'TONCOIN': 'TON',
-    'СОЛ': 'SOL', 'СОЛАНА': 'SOL',
-    'ДОГИ': 'DOGE', 'DOGECOIN': 'DOGE',
-    'РИПЛ': 'XRP', 'RIPPLE': 'XRP',
-    'НОТ': 'NOT', 'NOTCOIN': 'NOT',
-    'ПЕПЕ': 'PEPE',
-    'ТЕЗЕР': 'USDT'
 }
 
 class BotStates(StatesGroup):
@@ -107,12 +100,15 @@ def get_method_keyboard(prefix):
         [InlineKeyboardButton(text="🪙 Криптовалюта", callback_data=f"{prefix}_crypto")]
     ])
 
+# --- РЕЗОЛВЕР BESTCHANGE ---
 def resolve_bestchange_code(user_word, method):
     word = user_word.upper()
     code = CURRENCY_MAP.get(word)
+    
     if not code:
         if word in ['USDC']: return 'usd-coin'
         return None
+
     if not code.startswith('GENERIC_'): return code
 
     if method == 'cash':
@@ -137,11 +133,13 @@ def resolve_bestchange_code(user_word, method):
         if code == 'GENERIC_KZT': return 'visa-mastercard-kzt'
         if code == 'GENERIC_TRY': return 'visa-mastercard-try'
         if code == 'GENERIC_AED': return 'visa-mastercard-aed'
+        if code == 'GENERIC_CNY': return 'alipay'
         return 'visa-mastercard-usd'
+
     return 'tether-trc20'
 
-# --- 1. BINANCE API (БЫСТРО) ---
-async def get_binance_price(symbol):
+# --- УНИВЕРСАЛЬНЫЙ ПАРСЕР BINANCE ---
+async def get_raw_binance_price(symbol):
     url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
     try:
         async with ClientSession() as session:
@@ -149,34 +147,27 @@ async def get_binance_price(symbol):
                 if response.status == 200:
                     data = await response.json()
                     return float(data['price'])
+                return None
     except: return None
 
-# --- 2. COINGECKO API (РЕЗЕРВ ДЛЯ ЛЮБОЙ КРИПТЫ) ---
+# --- COINGECKO (РЕЗЕРВ) ---
 async def get_coingecko_price(query):
     try:
         async with ClientSession() as session:
-            # Сначала ищем ID монеты
             search_url = f"https://api.coingecko.com/api/v3/search?query={query}"
             async with session.get(search_url) as resp:
                 if resp.status != 200: return None, None
                 data = await resp.json()
                 if not data.get('coins'): return None, None
-                
-                # Берем первый результат (самый релевантный)
-                best_match = data['coins'][0]
-                coin_id = best_match['id']
-                coin_symbol = best_match['symbol'].upper()
-                
-                # Теперь узнаем цену
-                price_url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin_id}&vs_currencies=usd"
-                async with session.get(price_url) as price_resp:
-                    price_data = await price_resp.json()
-                    if coin_id in price_data:
-                        return price_data[coin_id]['usd'], coin_symbol
+                best = data['coins'][0]
+                price_url = f"https://api.coingecko.com/api/v3/simple/price?ids={best['id']}&vs_currencies=usd"
+                async with session.get(price_url) as pr:
+                    pdata = await pr.json()
+                    if best['id'] in pdata: return pdata[best['id']]['usd'], best['symbol'].upper()
     except: return None, None
     return None, None
 
-# --- 3. FOREX API (ФИАТ) ---
+# --- FOREX (ФИАТ) ---
 async def get_forex_rate(base, quote):
     url = f"https://open.er-api.com/v6/latest/{base}"
     try:
@@ -187,14 +178,15 @@ async def get_forex_rate(base, quote):
                     rates = data.get('rates', {})
                     if quote in rates: return float(rates[quote])
     except: return None
+    return None
 
 # =================================================
-# ЛОГИКА
+# ЛОГИКА 1: ОБМЕННИК
 # =================================================
 
 @dp.message(F.text == "💱 Обменник")
 async def exchange_start(message: types.Message, state: FSMContext):
-    await message.answer("🔄 **Новая заявка**\n\nНапиши пару (например: `AED USD`).", reply_markup=cancel_keyboard)
+    await message.answer("🔄 **Новая заявка**\n\nНапиши пару (например: `AED USD` или `UAH USDT`).", reply_markup=cancel_keyboard)
     await state.set_state(BotStates.exchange_pair)
 
 @dp.message(BotStates.exchange_pair)
@@ -253,6 +245,7 @@ async def show_final_result(message, data, city):
         await message.answer(f"⚠️ Ошибка: Я не понял валюту.", reply_markup=main_keyboard)
         return
 
+    # Ссылки с рефкой
     if code_give == code_get:
         link = f"https://www.bestchange.ru/{REF_BESTCHANGE}"
     else:
@@ -279,12 +272,12 @@ async def show_final_result(message, data, city):
     await message.answer("Меню:", reply_markup=main_keyboard)
 
 # =================================================
-# ЛОГИКА 2: КУРС КРИПТОВАЛЮТ (УМНЫЙ)
+# ЛОГИКА 2: КУРС КРИПТОВАЛЮТ
 # =================================================
 
 @dp.message(F.text == "🪙 Курс криптовалют")
 async def crypto_rates_start(message: types.Message, state: FSMContext):
-    await message.answer("🪙 Введи название (любое).\nПример: `TON`, `Notcoin`, `Pepe`, `Биткоин`", reply_markup=cancel_keyboard)
+    await message.answer("🪙 Введи тикер (BTC, TON, Notcoin):", reply_markup=cancel_keyboard)
     await state.set_state(BotStates.crypto_price_wait)
 
 @dp.message(BotStates.crypto_price_wait)
@@ -293,38 +286,23 @@ async def crypto_rates_result(message: types.Message, state: FSMContext):
         await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
     
     user_input = message.text.upper()
-    await message.answer(f"🔎 Ищу цену для **{user_input}**...")
-
-    # 1. Сначала проверяем наш словарь синонимов (ТОН -> TON)
-    ticker = CRYPTO_ALIASES.get(user_input, user_input)
-
-    # 2. Пробуем Binance (быстро и точно для популярных)
-    # Пытаемся сформировать пару (например TONUSDT)
-    binance_pair = ticker + "USDT"
-    price_binance = await get_binance_price(binance_pair)
-
-    if price_binance:
-        # Успех на Binance
-        await message.answer(f"📊 **{ticker}/USDT** (Binance):\n💰 `{price_binance:,.4f} $`", reply_markup=main_keyboard)
+    # 1. Binance
+    binance_pair = user_input.replace(" ", "") + "USDT"
+    price = await get_raw_binance_price(binance_pair)
     
+    if price:
+        await message.answer(f"📊 **{user_input}/USDT:** `{price:,.4f} $`", reply_markup=main_keyboard)
     else:
-        # 3. Если Binance не нашел - ищем ВЕЗДЕ через CoinGecko
-        price_cg, symbol_cg = await get_coingecko_price(user_input)
-        
-        if price_cg:
-            await message.answer(
-                f"🦎 **{symbol_cg}/USD** (CoinGecko):\n"
-                f"💰 `{price_cg:,.6f} $`\n"
-                f"_(Найден по запросу: {user_input})_", 
-                reply_markup=main_keyboard
-            )
+        # 2. CoinGecko
+        p_cg, s_cg = await get_coingecko_price(user_input)
+        if p_cg:
+            await message.answer(f"🦎 **{s_cg}/USD:** `{p_cg:,.6f} $`", reply_markup=main_keyboard)
         else:
-            await message.answer("⚠️ Не нашел такую крипту ни на биржах, ни в агрегаторах.", reply_markup=main_keyboard)
-            
+            await message.answer("⚠️ Не нашел такую крипту.", reply_markup=main_keyboard)
     await state.clear()
 
 # =================================================
-# ЛОГИКА 3: КУРС ФИАТА
+# ЛОГИКА 3: КУРС ФИАТНЫХ ВАЛЮТ
 # =================================================
 
 @dp.message(F.text == "💵 Курс валют")
@@ -341,12 +319,8 @@ async def fiat_rates_result(message: types.Message, state: FSMContext):
         await message.answer("⚠️ Нужно две валюты.", reply_markup=main_keyboard); return
 
     base_raw = words[0]; quote_raw = words[1]
-    base = CURRENCY_MAP.get(base_raw, base_raw) # Попытка нормализации
-    quote = CURRENCY_MAP.get(quote_raw, quote_raw)
-    
-    # Очистка от GENERIC_ префиксов для Forex API
-    base = base.replace("GENERIC_", "")
-    quote = quote.replace("GENERIC_", "")
+    base = CURRENCY_MAP.get(base_raw, base_raw).replace("GENERIC_", "")
+    quote = CURRENCY_MAP.get(quote_raw, quote_raw).replace("GENERIC_", "")
 
     rate = await get_forex_rate(base, quote)
     
@@ -355,6 +329,10 @@ async def fiat_rates_result(message: types.Message, state: FSMContext):
     else:
         await message.answer(f"⚠️ Не нашел курс `{base}` -> `{quote}`.", reply_markup=main_keyboard)
     await state.clear()
+
+# =================================================
+# ОСТАЛЬНОЕ
+# =================================================
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
@@ -384,11 +362,18 @@ async def start_web_server():
     runner = web.AppRunner(app); await runner.setup()
     port = int(os.getenv("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port); await site.start()
+
+# --- ИСПРАВЛЕННЫЙ KEEP_ALIVE (РАЗВЕРНУТЫЙ) ---
 async def keep_alive():
     while True:
         await asyncio.sleep(600)
-        try: async with ClientSession() as session: async with session.get(APP_URL) as response: pass
-        except: pass
+        try:
+            async with ClientSession() as session:
+                async with session.get(APP_URL) as response:
+                    pass
+        except:
+            pass
+# ---------------------------------------------
 
 async def main():
     if not BOT_TOKEN: return
