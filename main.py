@@ -20,11 +20,11 @@ APP_URL = "https://cryptomate-bot-59m4.onrender.com"
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# --- ТВОИ РЕФЕРАЛКИ ---
-REF_BESTCHANGE = "?p=1337426" # Твой ID
+# --- РЕФЕРАЛКИ ---
+REF_BESTCHANGE = "?p=1337426"
 REF_BYBIT = "https://www.bybit.com/invite?ref=KAB7WYP"
 REF_BINGX = "https://bingx.com/invite/DZ92UK/"
-REF_OKX = "https://okx.com" # (Если будет, добавим сюда)
+REF_OKX = "https://okx.com"
 
 dp = Dispatcher()
 bot = None
@@ -48,19 +48,22 @@ CURRENCY_MAP = {
     'LTC': 'litecoin', 'TON': 'toncoin', 'XMR': 'monero',
     'DOGE': 'dogecoin', 'SOL': 'solana', 'TRX': 'tron',
 
-    # ФИАТ
-    'USD': 'GENERIC_USD', 'ДОЛЛАР': 'GENERIC_USD',
-    'EUR': 'GENERIC_EUR', 'ЕВРО': 'GENERIC_EUR',
-    'RUB': 'GENERIC_RUB', 'РУБ': 'GENERIC_RUB', 'РУБЛЬ': 'GENERIC_RUB',
-    'UAH': 'GENERIC_UAH', 'ГРН': 'GENERIC_UAH', 'ГРИВНА': 'GENERIC_UAH',
-    'KZT': 'GENERIC_KZT', 'ТЕНГЕ': 'GENERIC_KZT',
-    'AED': 'GENERIC_AED', 'ДИРХАМ': 'GENERIC_AED', 'DIRHAM': 'GENERIC_AED',
-    'TRY': 'GENERIC_TRY', 'LIRA': 'GENERIC_TRY', 'ЛИРА': 'GENERIC_TRY',
-    'PLN': 'GENERIC_PLN', 'ZLOTY': 'GENERIC_PLN',
-    'GBP': 'GENERIC_GBP', 'POUND': 'GENERIC_GBP',
-    'GEL': 'GENERIC_GEL', 'ЛАРИ': 'GENERIC_GEL',
+    # ФИАТ (ДЛЯ ОБМЕННИКА И КУРСОВ)
+    'USD': 'USD', 'ДОЛЛАР': 'USD', 'DOL': 'USD', 'BUCKS': 'USD',
+    'EUR': 'EUR', 'ЕВРО': 'EUR',
+    'RUB': 'RUB', 'РУБ': 'RUB', 'РУБЛЬ': 'RUB', 'RUR': 'RUB',
+    'UAH': 'UAH', 'ГРН': 'UAH', 'ГРИВНА': 'UAH',
+    'KZT': 'KZT', 'ТЕНГЕ': 'KZT',
+    'AED': 'AED', 'ДИРХАМ': 'AED',
+    'TRY': 'TRY', 'LIRA': 'TRY', 'ЛИРА': 'TRY',
+    'PLN': 'PLN', 'ZLOTY': 'PLN', 'ЗЛОТЫЙ': 'PLN',
+    'GBP': 'GBP', 'POUND': 'GBP', 'ФУНТ': 'GBP',
+    'GEL': 'GEL', 'ЛАРИ': 'GEL',
+    'CNY': 'CNY', 'YUAN': 'CNY', 'ЮАНЬ': 'CNY',
+    'BYN': 'BYN', 'БЕЛРУБ': 'BYN',
+    'JPY': 'JPY', 'ЙЕНА': 'JPY',
 
-    # БАНКИ
+    # БАНКИ (ДЛЯ ОБМЕННИКА)
     'SBER': 'sberbank', 'СБЕР': 'sberbank',
     'TINKOFF': 'tinkoff', 'ТИНЬКОФФ': 'tinkoff',
     'MONO': 'monobank', 'МОНО': 'monobank',
@@ -74,6 +77,7 @@ class BotStates(StatesGroup):
     exchange_method_get = State()
     exchange_city = State()
     crypto_price_wait = State()
+    fiat_price_wait = State()
 
 main_keyboard = ReplyKeyboardMarkup(
     keyboard=[
@@ -96,46 +100,64 @@ def get_method_keyboard(prefix):
         [InlineKeyboardButton(text="🪙 Криптовалюта", callback_data=f"{prefix}_crypto")]
     ])
 
-# --- РЕЗОЛВЕР ---
+# --- РЕЗОЛВЕР BESTCHANGE ---
 def resolve_bestchange_code(user_word, method):
     word = user_word.upper()
-    code = CURRENCY_MAP.get(word)
+    # Сначала пытаемся найти в словаре
+    code = CURRENCY_MAP.get(word, word.lower()) # Если нет, берем как есть
     
-    if not code:
-        if word in ['USDC']: return 'usd-coin'
-        return None
+    # Это фиат из словаря?
+    is_fiat = code in ['USD', 'EUR', 'RUB', 'UAH', 'KZT', 'AED', 'TRY', 'PLN', 'GBP', 'GEL', 'CNY']
 
-    if not code.startswith('GENERIC_'):
+    # Если это код банка (sberbank) или крипты (bitcoin) - возвращаем сразу
+    if len(code) > 4 and code not in ['GENERIC_USD']: 
         return code
 
-    if method == 'cash':
-        if code == 'GENERIC_USD': return 'dollar-cash'
-        if code == 'GENERIC_EUR': return 'euro-cash'
-        if code == 'GENERIC_RUB': return 'ruble-cash'
-        if code == 'GENERIC_UAH': return 'hryvna-cash'
-        if code == 'GENERIC_AED': return 'dirham'
-        if code == 'GENERIC_TRY': return 'lira'
-        if code == 'GENERIC_PLN': return 'zloty'
-        if code == 'GENERIC_GBP': return 'pound'
-        if code == 'GENERIC_KZT': return 'tenge-cash'
-        if code == 'GENERIC_GEL': return 'gel'
-        return 'dollar-cash'
+    # === ЛОГИКА ДЛЯ ФИАТА ===
+    if is_fiat:
+        if method == 'cash':
+            if code == 'USD': return 'dollar-cash'
+            if code == 'EUR': return 'euro-cash'
+            if code == 'RUB': return 'ruble-cash'
+            if code == 'UAH': return 'hryvna-cash'
+            if code == 'AED': return 'dirham'
+            if code == 'TRY': return 'lira'
+            if code == 'PLN': return 'zloty'
+            if code == 'GBP': return 'pound'
+            if code == 'KZT': return 'tenge-cash'
+            if code == 'GEL': return 'gel'
+            if code == 'CNY': return 'yuan'
+            return 'dollar-cash'
 
-    if method == 'card':
-        if code == 'GENERIC_USD': return 'visa-mastercard-usd'
-        if code == 'GENERIC_EUR': return 'visa-mastercard-eur'
-        if code == 'GENERIC_RUB': return 'sberbank'
-        if code == 'GENERIC_UAH': return 'visa-mastercard-uah'
-        if code == 'GENERIC_KZT': return 'visa-mastercard-kzt'
-        if code == 'GENERIC_TRY': return 'visa-mastercard-try'
-        if code == 'GENERIC_AED': return 'visa-mastercard-aed'
-        return 'visa-mastercard-usd'
+        if method == 'card':
+            if code == 'USD': return 'visa-mastercard-usd'
+            if code == 'EUR': return 'visa-mastercard-eur'
+            if code == 'RUB': return 'sberbank'
+            if code == 'UAH': return 'visa-mastercard-uah'
+            if code == 'KZT': return 'visa-mastercard-kzt'
+            if code == 'TRY': return 'visa-mastercard-try'
+            if code == 'CNY': return 'alipay'
+            return 'visa-mastercard-usd'
 
     return 'tether-trc20'
 
-async def get_binance_price(coin):
-    symbol = coin.upper().replace(" ", "")
-    if not symbol.endswith("USDT"): symbol += "USDT"
+# --- API FOREX (ОБЫЧНЫЕ ДЕНЬГИ) ---
+async def get_forex_rate(base, quote):
+    # API Европейского Центробанка (бесплатно, без ключей)
+    url = f"https://open.er-api.com/v6/latest/{base}"
+    try:
+        async with ClientSession() as session:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    rates = data.get('rates', {})
+                    if quote in rates:
+                        return float(rates[quote])
+                return None
+    except: return None
+
+# --- API BINANCE (КРИПТА) ---
+async def get_raw_binance_price(symbol):
     url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
     try:
         async with ClientSession() as session:
@@ -147,7 +169,7 @@ async def get_binance_price(coin):
     except: return None
 
 # =================================================
-# ЛОГИКА
+# ЛОГИКА 1: ОБМЕННИК
 # =================================================
 
 @dp.message(F.text == "💱 Обменник")
@@ -186,7 +208,7 @@ async def exchange_save_get(callback: types.CallbackQuery, state: FSMContext):
         await show_final_result(callback.message, data, "Онлайн")
         await state.clear()
     else:
-        await callback.message.answer("🏙 **Город?**\n(Например: `Дубай`)", reply_markup=cancel_keyboard)
+        await callback.message.answer("🏙 **Город?**\n(Например: `Дубай`, `Москва`)", reply_markup=cancel_keyboard)
         await state.set_state(BotStates.exchange_city)
     await callback.answer()
 
@@ -211,7 +233,6 @@ async def show_final_result(message, data, city):
         await message.answer(f"⚠️ Ошибка: Я не понял валюту.", reply_markup=main_keyboard)
         return
 
-    # --- ССЫЛКИ С РЕФЕРАЛКОЙ ---
     if code_give == code_get:
         link = f"https://www.bestchange.ru/{REF_BESTCHANGE}"
     else:
@@ -219,7 +240,6 @@ async def show_final_result(message, data, city):
         
     rows = []
     rows.append([InlineKeyboardButton(text="🟢 Открыть BestChange", url=link)])
-    # Сюда тоже добавляем рефку
     rows.append([InlineKeyboardButton(text="📋 Список вручную", url=f"https://www.bestchange.ru/list.html{REF_BESTCHANGE}")])
     
     if city.lower() in ['онлайн', 'online', 'интернет']:
@@ -232,25 +252,14 @@ async def show_final_result(message, data, city):
     
     await message.answer(
         f"🔎 **Пара:** `{give_raw.upper()}` -> `{get_raw.upper()}`\n"
-        f"📍 **Локация:** `{city}`\n"
+        f"📍 **Локация:** `{city}`\n\n"
         "👇 Результат поиска:", 
         reply_markup=keyboard
     )
     await message.answer("Меню:", reply_markup=main_keyboard)
 
-@dp.message(F.text == "🏆 Топ бирж")
-async def top_exchanges(message: types.Message):
-    # ТУТ ТВОИ РЕФЕРАЛЬНЫЕ ССЫЛКИ
-    text = (
-        "🔥 **ТОП БИРЖ (Проверено)**\n\n"
-        f"1. 🟡 **Bybit** — [Бонусы до $30,000]({REF_BYBIT})\n"
-        f"2. 🔵 **BingX** — [Без KYC]({REF_BINGX})\n"
-        f"3. ⚫️ **OKX** — [Надежность]({REF_OKX})"
-    )
-    await message.answer(text, disable_web_page_preview=True)
-
 # =================================================
-# ОСТАЛЬНОЕ
+# ЛОГИКА 2: КУРС КРИПТОВАЛЮТ (Coin -> USDT)
 # =================================================
 
 @dp.message(F.text == "🪙 Курс криптовалют")
@@ -262,17 +271,84 @@ async def crypto_rates_start(message: types.Message, state: FSMContext):
 async def crypto_rates_result(message: types.Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
-    coin = message.text.upper()
-    price = await get_binance_price(coin)
+    
+    coin = message.text.upper().replace(" ", "")
+    if not coin.endswith("USDT"): pair = coin + "USDT"
+    else: pair = coin
+        
+    price = await get_raw_binance_price(pair)
+    
     if price:
         await message.answer(f"📊 **{coin}/USDT:** `{price:,.2f} $`", reply_markup=main_keyboard)
     else:
-        await message.answer("⚠️ Не нашел.", reply_markup=main_keyboard)
+        await message.answer("⚠️ Не нашел. Попробуй тикер (например BTC).", reply_markup=main_keyboard)
     await state.clear()
+
+# =================================================
+# ЛОГИКА 3: КУРС ФИАТНЫХ ВАЛЮТ (FOREX) - ИСПРАВЛЕНО
+# =================================================
+
+@dp.message(F.text == "💵 Курс валют")
+async def fiat_rates_start(message: types.Message, state: FSMContext):
+    await message.answer(
+        "💵 **Мировой конвертер валют**\n\n"
+        "Напиши пару через пробел (любые валюты).\n"
+        "Пример: `EUR USD` или `RUB KZT`",
+        reply_markup=cancel_keyboard
+    )
+    await state.set_state(BotStates.fiat_price_wait)
+
+@dp.message(BotStates.fiat_price_wait)
+async def fiat_rates_result(message: types.Message, state: FSMContext):
+    if message.text == "❌ Отмена":
+        await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
+    
+    words = re.findall(r'\w+', message.text.upper())
+    if len(words) < 2:
+        await message.answer("⚠️ Напиши ДВЕ валюты. Например: `USD RUB`", reply_markup=main_keyboard)
+        return
+
+    # Берем коды из словаря или используем то, что написал юзер (если 3 буквы)
+    base_raw = words[0]
+    quote_raw = words[1]
+    
+    base = CURRENCY_MAP.get(base_raw, base_raw) # Например РУБ -> RUB
+    quote = CURRENCY_MAP.get(quote_raw, quote_raw)
+    
+    # Запрос к API Центробанков (Forex)
+    rate = await get_forex_rate(base, quote)
+    
+    if rate:
+        await message.answer(
+            f"💱 **Курс ЦБ / Forex:**\n\n"
+            f"1 {base} = **{rate:,.2f}** {quote}",
+            reply_markup=main_keyboard
+        )
+    else:
+        await message.answer(
+            f"⚠️ Не удалось найти курс `{base}` -> `{quote}`.\n"
+            f"Попробуй международные коды: USD, EUR, RUB, KZT, CNY.", 
+            reply_markup=main_keyboard
+        )
+    await state.clear()
+
+# =================================================
+# ОСТАЛЬНОЕ
+# =================================================
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
     await message.answer(f"Привет! Я CryptoMate 🤖.", reply_markup=main_keyboard)
+
+@dp.message(F.text == "🏆 Топ бирж")
+async def top_exchanges(message: types.Message):
+    text = (
+        "🔥 **ТОП БИРЖ (Проверено)**\n\n"
+        f"1. 🟡 **Bybit** — [Бонусы до $30,000]({REF_BYBIT})\n"
+        f"2. 🔵 **BingX** — [Без KYC]({REF_BINGX})\n"
+        f"3. ⚫️ **OKX** — [Надежность]({REF_OKX})"
+    )
+    await message.answer(text, disable_web_page_preview=True)
 
 @dp.message()
 async def ai_chat(message: types.Message):
@@ -289,7 +365,6 @@ async def start_web_server():
     port = int(os.getenv("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port); await site.start()
 
-# --- ИСПРАВЛЕННЫЙ PING ---
 async def keep_alive():
     while True:
         await asyncio.sleep(600)
