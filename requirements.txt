@@ -1,4 +1,4 @@
-aiogram>=3.0.0
+aiogram>=3.10.0
 python-dotenv
 aiohttp
-google-generativeai>=0.7.2
+google-generativeai>=0.8.3
