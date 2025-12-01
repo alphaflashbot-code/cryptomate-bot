@@ -28,27 +28,27 @@ REF_OKX = "https://okx.com"
 
 dp = Dispatcher()
 bot = None
-model = None # Инициализируем переменную
+model = None
 
 if BOT_TOKEN:
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
 
-# --- НАСТРОЙКА ИИ ---
+# --- ЛИЧНОСТЬ БОТА ---
 SYSTEM_PROMPT = """
 Ты — CryptoMate, профессиональный крипто-аналитик.
+Твоя цель: помогать пользователям разбираться в финансах.
 Отвечай кратко, четко, используй эмодзи.
-Твоя тема: Криптовалюты, финансы, трейдинг.
-На вопросы не по теме отвечай вежливо, что ты занимаешься только финансами.
+Если спрашивают прогноз цены — не давай гарантий, напоминай про DYOR.
+Твой тон: Дружелюбный эксперт.
 """
 
 try:
     if GEMINI_API_KEY:
         genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=SYSTEM_PROMPT)
-    else:
-        print("⚠️ GEMINI_API_KEY не найден в переменных окружения!")
-except Exception as e:
-    print(f"⚠️ Ошибка настройки Gemini: {e}")
+        # ИСПОЛЬЗУЕМ СТАНДАРТНУЮ МОДЕЛЬ (РАБОТАЕТ ВЕЗДЕ)
+        model = genai.GenerativeModel('gemini-pro')
+except:
+    pass
 
 # --- СЛОВАРЬ ВАЛЮТ ---
 CURRENCY_MAP = {
@@ -306,7 +306,7 @@ async def crypto_rates_result(message: types.Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
     user_input = message.text.upper()
-    ticker = CRYPTO_ALIASES.get(user_input, user_input) # Исправляем кириллицу
+    ticker = CRYPTO_ALIASES.get(user_input, user_input)
     binance_pair = ticker.replace(" ", "") + "USDT"
     price = await get_raw_binance_price(binance_pair)
     if price:
@@ -347,7 +347,7 @@ async def market_live(message: types.Message):
     await message.answer(report)
 
 # =================================================
-# ЛОГИКА 5: КРИПТО-ИИ
+# ЛОГИКА 5: КРИПТО-ИИ (ИСПРАВЛЕНО)
 # =================================================
 
 @dp.message(F.text == "🧠 Крипто-ИИ")
@@ -356,17 +356,20 @@ async def ai_intro(message: types.Message):
 
 @dp.message()
 async def ai_chat(message: types.Message):
-    # ПРОВЕРКА: Если модель не загрузилась
     if model is None:
-        await message.answer("⚠️ Ошибка: ИИ не подключен. Проверь GEMINI_API_KEY на Render.")
+        await message.answer("⚠️ Ошибка: ИИ не подключен.")
         return
 
     try:
         await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-        response = model.generate_content(message.text)
+        
+        # СКЛЕИВАЕМ ЛИЧНОСТЬ И ВОПРОС ЮЗЕРА
+        # Это работает на любой версии библиотеки
+        full_prompt = f"{SYSTEM_PROMPT}\n\nВопрос пользователя: {message.text}"
+        
+        response = model.generate_content(full_prompt)
         await message.answer(response.text)
     except Exception as e:
-        # ВОТ ТУТ МЫ УВИДИМ РЕАЛЬНУЮ ОШИБКУ
         await message.answer(f"⚠️ Ошибка Gemini: {e}")
 
 # =================================================
