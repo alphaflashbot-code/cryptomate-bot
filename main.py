@@ -44,27 +44,30 @@ SYSTEM_PROMPT = """
 try:
     if GEMINI_API_KEY:
         genai.configure(api_key=GEMINI_API_KEY)
-        # --- СТАВИМ GEMINI 2.0 FLASH ---
-        model = genai.GenerativeModel('gemini-2.0-flash-exp', system_instruction=SYSTEM_PROMPT)
-except:
-    pass
+        # ИСПОЛЬЗУЕМ 1.5 FLASH (Самая стабильная)
+        model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=SYSTEM_PROMPT)
+except Exception as e:
+    print(f"Ошибка настройки Google: {e}")
 
 # --- СЛОВАРЬ ВАЛЮТ ---
 CURRENCY_MAP = {
     'USDT': 'tether-trc20', 'TRC20': 'tether-trc20', 'ТЕЗЕР': 'tether-trc20',
-    'BTC': 'bitcoin', 'BITCOIN': 'bitcoin', 'ETH': 'ethereum', 'TON': 'toncoin',
-    'LTC': 'litecoin', 'DOGE': 'dogecoin', 'SOL': 'solana', 'TRX': 'tron',
-    'USD': 'GENERIC_USD', 'ДОЛЛАР': 'GENERIC_USD',
+    'ERC20': 'tether-erc20',
+    'BTC': 'bitcoin', 'BITCOIN': 'bitcoin', 'БИТОК': 'bitcoin',
+    'ETH': 'ethereum', 'ЭФИР': 'ethereum',
+    'LTC': 'litecoin', 'TON': 'toncoin', 'XMR': 'monero',
+    'DOGE': 'dogecoin', 'SOL': 'solana', 'TRX': 'tron',
+    'USD': 'GENERIC_USD', 'ДОЛЛАР': 'GENERIC_USD', 'DOL': 'GENERIC_USD',
     'EUR': 'GENERIC_EUR', 'ЕВРО': 'GENERIC_EUR',
-    'RUB': 'GENERIC_RUB', 'РУБ': 'GENERIC_RUB',
-    'UAH': 'GENERIC_UAH', 'ГРН': 'GENERIC_UAH',
+    'RUB': 'GENERIC_RUB', 'РУБ': 'GENERIC_RUB', 'РУБЛЬ': 'GENERIC_RUB',
+    'UAH': 'GENERIC_UAH', 'ГРН': 'GENERIC_UAH', 'ГРИВНА': 'GENERIC_UAH',
     'KZT': 'GENERIC_KZT', 'ТЕНГЕ': 'GENERIC_KZT',
     'AED': 'GENERIC_AED', 'ДИРХАМ': 'GENERIC_AED',
-    'TRY': 'GENERIC_TRY', 'LIRA': 'GENERIC_TRY',
+    'TRY': 'GENERIC_TRY', 'LIRA': 'GENERIC_TRY', 'ЛИРА': 'GENERIC_TRY',
     'PLN': 'GENERIC_PLN', 'ZLOTY': 'GENERIC_PLN',
     'GBP': 'GENERIC_GBP', 'GEL': 'GENERIC_GEL', 'CNY': 'GENERIC_CNY',
-    'SBER': 'sberbank', 'TINKOFF': 'tinkoff', 'MONO': 'monobank', 
-    'PRIVAT': 'privat24-uah', 'KASPI': 'kaspi-bank'
+    'SBER': 'sberbank', 'TINKOFF': 'tinkoff', 'MONO': 'monobank',
+    'PRIVAT': 'privat24-uah', 'KASPI': 'kaspi-bank',
 }
 
 # --- СЛОВАРЬ ТИКЕРОВ ---
@@ -128,7 +131,6 @@ def resolve_bestchange_code(user_word, method):
         if code == 'GENERIC_UAH': return 'visa-mastercard-uah'
         if code == 'GENERIC_KZT': return 'visa-mastercard-kzt'
         if code == 'GENERIC_TRY': return 'visa-mastercard-try'
-        if code == 'GENERIC_AED': return 'visa-mastercard-aed'
         return 'visa-mastercard-usd'
     return 'tether-trc20'
 
@@ -321,7 +323,7 @@ async def start_web_server():
     port = int(os.getenv("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port); await site.start()
 
-# --- ВОТ ИСПРАВЛЕННАЯ ФУНКЦИЯ (СИНТАКСИС ОК) ---
+# --- ИСПРАВЛЕННЫЙ БЛОК KEEP_ALIVE (ТЕПЕРЬ БЕЗ ОШИБОК) ---
 async def keep_alive():
     while True:
         await asyncio.sleep(600)
@@ -331,7 +333,7 @@ async def keep_alive():
                     pass
         except:
             pass
-# ------------------------------------------------
+# ---------------------------------------------------------
 
 async def main():
     if not BOT_TOKEN: return
