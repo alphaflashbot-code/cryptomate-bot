@@ -45,8 +45,8 @@ SYSTEM_PROMPT = """
 try:
     if GEMINI_API_KEY:
         genai.configure(api_key=GEMINI_API_KEY)
-        # ИСПОЛЬЗУЕМ СТАНДАРТНУЮ МОДЕЛЬ (РАБОТАЕТ ВЕЗДЕ)
-        model = genai.GenerativeModel('gemini-pro')
+        # ИСПОЛЬЗУЕМ FLASH (САМАЯ БЫСТРАЯ И СТАБИЛЬНАЯ СЕЙЧАС)
+        model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=SYSTEM_PROMPT)
 except:
     pass
 
@@ -347,7 +347,7 @@ async def market_live(message: types.Message):
     await message.answer(report)
 
 # =================================================
-# ЛОГИКА 5: КРИПТО-ИИ (ИСПРАВЛЕНО)
+# ЛОГИКА 5: КРИПТО-ИИ
 # =================================================
 
 @dp.message(F.text == "🧠 Крипто-ИИ")
@@ -356,18 +356,16 @@ async def ai_intro(message: types.Message):
 
 @dp.message()
 async def ai_chat(message: types.Message):
+    # ПРОВЕРКА: Если модель не загрузилась
     if model is None:
-        await message.answer("⚠️ Ошибка: ИИ не подключен.")
+        await message.answer("⚠️ Ошибка: ИИ не подключен. Библиотека Google не обновилась на сервере.")
         return
 
     try:
         await bot.send_chat_action(chat_id=message.chat.id, action="typing")
         
-        # СКЛЕИВАЕМ ЛИЧНОСТЬ И ВОПРОС ЮЗЕРА
-        # Это работает на любой версии библиотеки
-        full_prompt = f"{SYSTEM_PROMPT}\n\nВопрос пользователя: {message.text}"
-        
-        response = model.generate_content(full_prompt)
+        # Передаем ответ
+        response = model.generate_content(message.text)
         await message.answer(response.text)
     except Exception as e:
         await message.answer(f"⚠️ Ошибка Gemini: {e}")
