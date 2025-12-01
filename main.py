@@ -45,8 +45,8 @@ SYSTEM_PROMPT = """
 try:
     if GEMINI_API_KEY:
         genai.configure(api_key=GEMINI_API_KEY)
-        # ИСПОЛЬЗУЕМ FLASH (САМАЯ БЫСТРАЯ И СТАБИЛЬНАЯ СЕЙЧАС)
-        model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=SYSTEM_PROMPT)
+        # --- ИЗМЕНЕНИЕ: ИСПОЛЬЗУЕМ GEMINI-PRO (ОНА РАБОТАЕТ ВЕЗДЕ) ---
+        model = genai.GenerativeModel('gemini-pro')
 except:
     pass
 
@@ -356,7 +356,6 @@ async def ai_intro(message: types.Message):
 
 @dp.message()
 async def ai_chat(message: types.Message):
-    # ПРОВЕРКА: Если модель не загрузилась
     if model is None:
         await message.answer("⚠️ Ошибка: ИИ не подключен. Библиотека Google не обновилась на сервере.")
         return
@@ -364,8 +363,10 @@ async def ai_chat(message: types.Message):
     try:
         await bot.send_chat_action(chat_id=message.chat.id, action="typing")
         
-        # Передаем ответ
-        response = model.generate_content(message.text)
+        # Передаем промпт вместе с сообщением (Это работает всегда)
+        full_prompt = f"{SYSTEM_PROMPT}\n\nВопрос пользователя: {message.text}"
+        response = model.generate_content(full_prompt)
+        
         await message.answer(response.text)
     except Exception as e:
         await message.answer(f"⚠️ Ошибка Gemini: {e}")
