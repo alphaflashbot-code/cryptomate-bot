@@ -45,7 +45,7 @@ SYSTEM_PROMPT = """
 try:
     if GEMINI_API_KEY:
         genai.configure(api_key=GEMINI_API_KEY)
-        # ИСПОЛЬЗУЕМ FLASH (САМАЯ БЫСТРАЯ И СТАБИЛЬНАЯ СЕЙЧАС)
+        # ИСПОЛЬЗУЕМ FLASH (САМАЯ БЫСТРАЯ) - ОНА ЗАРАБОТАЕТ ПОСЛЕ ОЧИСТКИ КЭША
         model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=SYSTEM_PROMPT)
 except:
     pass
@@ -78,11 +78,8 @@ CURRENCY_MAP = {
 
 # --- СЛОВАРЬ ТИКЕРОВ ---
 CRYPTO_ALIASES = {
-    'БИТОК': 'BTC', 'БИТКОИН': 'BTC', 'BITCOIN': 'BTC',
-    'ЭФИР': 'ETH', 'ETHER': 'ETH', 'ETHEREUM': 'ETH',
-    'ТОН': 'TON', 'TONCOIN': 'TON', 'СОЛ': 'SOL', 
-    'ДОГИ': 'DOGE', 'РИПЛ': 'XRP', 'НОТ': 'NOT', 'NOTCOIN': 'NOT',
-    'ПЕПЕ': 'PEPE', 'ТЕЗЕР': 'USDT'
+    'БИТОК': 'BTC', 'БИТКОИН': 'BTC', 'ЭФИР': 'ETH', 'ТОН': 'TON', 'СОЛ': 'SOL', 
+    'ДОГИ': 'DOGE', 'НОТ': 'NOT', 'ПЕПЕ': 'PEPE', 'ТЕЗЕР': 'USDT'
 }
 
 class BotStates(StatesGroup):
@@ -102,10 +99,7 @@ main_keyboard = ReplyKeyboardMarkup(
     resize_keyboard=True
 )
 
-cancel_keyboard = ReplyKeyboardMarkup(
-    keyboard=[[KeyboardButton(text="❌ Отмена")]],
-    resize_keyboard=True
-)
+cancel_keyboard = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="❌ Отмена")]], resize_keyboard=True)
 
 def get_method_keyboard(prefix):
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -143,7 +137,6 @@ def resolve_bestchange_code(user_word, method):
         if code == 'GENERIC_UAH': return 'visa-mastercard-uah'
         if code == 'GENERIC_KZT': return 'visa-mastercard-kzt'
         if code == 'GENERIC_TRY': return 'visa-mastercard-try'
-        if code == 'GENERIC_AED': return 'visa-mastercard-aed'
         return 'visa-mastercard-usd'
     return 'tether-trc20'
 
@@ -194,37 +187,29 @@ async def get_market_analysis():
                 data = await response.json()
                 valid_pairs = [x for x in data if x['symbol'].endswith('USDT') and float(x['quoteVolume']) > 50000000]
                 sorted_by_change = sorted(valid_pairs, key=lambda x: float(x['priceChangePercent']), reverse=True)
-                
                 gainers = sorted_by_change[:5]
                 losers = sorted_by_change[-3:]
                 btc = next((x for x in valid_pairs if x['symbol'] == 'BTCUSDT'), None)
-                eth = next((x for x in valid_pairs if x['symbol'] == 'ETHUSDT'), None)
-                
                 mood = "🟢 Бычий" if float(btc['priceChangePercent']) > 0 else "🔴 Медвежий"
-                text = f"📊 **РЫНОК LIVE**\n\n👑 BTC: `{float(btc['lastPrice']):,.0f}$`\n💎 ETH: `{float(eth['lastPrice']):,.0f}$`\n🌡 Настроение: {mood}\n\n🚀 **Лидеры роста:**\n"
+                text = f"📊 **РЫНОК LIVE**\n\n👑 BTC: `{float(btc['lastPrice']):,.0f}$`\n🌡 Настроение: {mood}\n\n🚀 **Лидеры роста:**\n"
                 for i, c in enumerate(gainers, 1): text += f"{i}. {c['symbol'][:-4]}: +{float(c['priceChangePercent']):.1f}%\n"
                 text += "\n🩸 **Аутсайдеры:**\n"
                 for c in losers: text += f"• {c['symbol'][:-4]}: {float(c['priceChangePercent']):.1f}%\n"
                 return text
     except: return "Ошибка API."
 
-# =================================================
-# ЛОГИКА 1: ОБМЕННИК
-# =================================================
+# --- ЛОГИКА ---
 
 @dp.message(F.text == "💱 Обменник")
 async def exchange_start(message: types.Message, state: FSMContext):
-    await message.answer("🔄 **Новая заявка**\n\nНапиши пару (например: `AED USD`).", reply_markup=cancel_keyboard)
+    await message.answer("🔄 **Новая заявка**\n\nНапиши пару (например: `AED USD` или `UAH USDT`).", reply_markup=cancel_keyboard)
     await state.set_state(BotStates.exchange_pair)
 
 @dp.message(BotStates.exchange_pair)
 async def exchange_get_pair(message: types.Message, state: FSMContext):
-    if message.text == "❌ Отмена":
-        await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
+    if message.text == "❌ Отмена": await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
     words = re.findall(r'\w+', message.text)
-    if len(words) < 2:
-        await message.answer("⚠️ Напиши две валюты через пробел.")
-        return
+    if len(words) < 2: await message.answer("⚠️ Напиши две валюты."); return
     await state.update_data(give_raw=words[0], get_raw=words[1])
     await message.answer(f"➡️ Как отдаете **{words[0].upper()}**?", reply_markup=get_method_keyboard("give"))
     await state.set_state(BotStates.exchange_method_give)
@@ -243,83 +228,54 @@ async def exchange_save_get(callback: types.CallbackQuery, state: FSMContext):
     method_get = callback.data.split("_")[1]
     await state.update_data(method_get=method_get)
     data = await state.get_data()
-    m_give = data['method_give']
-    if m_give != 'cash' and method_get != 'cash':
+    if data['method_give'] != 'cash' and method_get != 'cash':
         await show_final_result(callback.message, data, "Онлайн")
         await state.clear()
     else:
-        await callback.message.answer("🏙 **Город?**\n(Например: `Дубай`, `Москва`)", reply_markup=cancel_keyboard)
+        await callback.message.answer("🏙 **Город?**", reply_markup=cancel_keyboard)
         await state.set_state(BotStates.exchange_city)
     await callback.answer()
 
 @dp.message(BotStates.exchange_city)
 async def exchange_finish_city(message: types.Message, state: FSMContext):
-    if message.text == "❌ Отмена":
-        await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
+    if message.text == "❌ Отмена": await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
     data = await state.get_data()
     await show_final_result(message, data, message.text.strip())
     await state.clear()
 
 async def show_final_result(message, data, city):
-    give_raw = data['give_raw']
-    get_raw = data['get_raw']
-    m_give = data['method_give']
-    m_get = data['method_get']
-    
-    code_give = resolve_bestchange_code(give_raw, m_give)
-    code_get = resolve_bestchange_code(get_raw, m_get)
+    give_raw, get_raw = data['give_raw'], data['get_raw']
+    code_give = resolve_bestchange_code(give_raw, data['method_give'])
+    code_get = resolve_bestchange_code(get_raw, data['method_get'])
     
     if not code_give or not code_get:
-        await message.answer(f"⚠️ Ошибка: Я не понял валюту.", reply_markup=main_keyboard)
+        await message.answer(f"⚠️ Ошибка: не понял валюту.", reply_markup=main_keyboard)
         return
 
-    if code_give == code_get:
-        link = f"https://www.bestchange.ru/{REF_BESTCHANGE}"
-    else:
-        link = f"https://www.bestchange.ru/{code_give}-to-{code_get}.html{REF_BESTCHANGE}"
-        
-    rows = []
-    rows.append([InlineKeyboardButton(text="🟢 Открыть BestChange", url=link)])
-    rows.append([InlineKeyboardButton(text="📋 Список вручную", url=f"https://www.bestchange.ru/list.html{REF_BESTCHANGE}")])
-    
-    if city.lower() in ['онлайн', 'online', 'интернет']:
-        rows.append([InlineKeyboardButton(text="🟡 Bybit P2P", url="https://www.bybit.com/fiat/trade/otc")])
-    else:
-        maps_url = f"https://www.google.com/maps/search/crypto+exchange+{city}"
-        rows.append([InlineKeyboardButton(text=f"📍 Карта обменников ({city})", url=maps_url)])
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
-    await message.answer(f"🔎 **Пара:** `{give_raw.upper()}` -> `{get_raw.upper()}`\n📍 **Локация:** `{city}`\n👇 Результат:", reply_markup=keyboard)
+    link = f"https://www.bestchange.ru/{code_give}-to-{code_get}.html{REF_BESTCHANGE}" if code_give != code_get else f"https://www.bestchange.ru/{REF_BESTCHANGE}"
+    rows = [[InlineKeyboardButton(text="🟢 Открыть BestChange", url=link)], [InlineKeyboardButton(text="📋 Список вручную", url=f"https://www.bestchange.ru/list.html{REF_BESTCHANGE}")]]
+    if city.lower() in ['онлайн', 'online', 'интернет']: rows.append([InlineKeyboardButton(text="🟡 Bybit P2P", url="https://www.bybit.com/fiat/trade/otc")])
+    else: rows.append([InlineKeyboardButton(text=f"📍 Карта обменников ({city})", url=f"https://www.google.com/maps/search/crypto+exchange+{city}")])
+    await message.answer(f"🔎 **Пара:** `{give_raw.upper()}` -> `{get_raw.upper()}`\n📍 **Локация:** `{city}`", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await message.answer("Меню:", reply_markup=main_keyboard)
-
-# =================================================
-# ЛОГИКА 2: КУРС КРИПТЫ
-# =================================================
 
 @dp.message(F.text == "🪙 Курс криптовалют")
 async def crypto_rates_start(message: types.Message, state: FSMContext):
-    await message.answer("🪙 Введи тикер (BTC, Notcoin):", reply_markup=cancel_keyboard)
+    await message.answer("🪙 Введи тикер:", reply_markup=cancel_keyboard)
     await state.set_state(BotStates.crypto_price_wait)
 
 @dp.message(BotStates.crypto_price_wait)
 async def crypto_rates_result(message: types.Message, state: FSMContext):
-    if message.text == "❌ Отмена":
-        await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
+    if message.text == "❌ Отмена": await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
     user_input = message.text.upper()
     ticker = CRYPTO_ALIASES.get(user_input, user_input)
-    binance_pair = ticker.replace(" ", "") + "USDT"
-    price = await get_raw_binance_price(binance_pair)
-    if price:
-        await message.answer(f"📊 **{ticker}/USDT:** `{price:,.4f} $`", reply_markup=main_keyboard)
+    price = await get_raw_binance_price(ticker.replace(" ", "") + "USDT")
+    if price: await message.answer(f"📊 **{ticker}/USDT:** `{price:,.4f} $`", reply_markup=main_keyboard)
     else:
-        p_cg, s_cg = await get_coingecko_price(ticker)
-        if p_cg: await message.answer(f"🦎 **{s_cg}/USD:** `{p_cg:,.6f} $`", reply_markup=main_keyboard)
+        p, s = await get_coingecko_price(ticker)
+        if p: await message.answer(f"🦎 **{s}/USD:** `{p:,.6f} $`", reply_markup=main_keyboard)
         else: await message.answer("⚠️ Не нашел.", reply_markup=main_keyboard)
     await state.clear()
-
-# =================================================
-# ЛОГИКА 3: КУРС ФИАТА
-# =================================================
 
 @dp.message(F.text == "💵 Курс валют")
 async def fiat_rates_start(message: types.Message, state: FSMContext):
@@ -328,11 +284,9 @@ async def fiat_rates_start(message: types.Message, state: FSMContext):
 
 @dp.message(BotStates.fiat_price_wait)
 async def fiat_rates_result(message: types.Message, state: FSMContext):
-    if message.text == "❌ Отмена":
-        await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
+    if message.text == "❌ Отмена": await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
     words = re.findall(r'\w+', message.text.upper())
-    if len(words) < 2:
-        await message.answer("⚠️ Нужно две валюты.", reply_markup=main_keyboard); return
+    if len(words) < 2: await message.answer("⚠️ Нужно две валюты.", reply_markup=main_keyboard); return
     base = CURRENCY_MAP.get(words[0], words[0]).replace("GENERIC_", "")
     quote = CURRENCY_MAP.get(words[1], words[1]).replace("GENERIC_", "")
     rate = await get_forex_rate(base, quote)
@@ -346,34 +300,19 @@ async def market_live(message: types.Message):
     report = await get_market_analysis()
     await message.answer(report)
 
-# =================================================
-# ЛОГИКА 5: КРИПТО-ИИ
-# =================================================
-
 @dp.message(F.text == "🧠 Крипто-ИИ")
 async def ai_intro(message: types.Message):
     await message.answer("🧠 Я слушаю! Задай любой вопрос про крипту.", reply_markup=main_keyboard)
 
 @dp.message()
 async def ai_chat(message: types.Message):
-    if model is None:
-        await message.answer("⚠️ Ошибка: ИИ не подключен.")
-        return
-
+    if model is None: await message.answer("⚠️ ИИ не настроен."); return
     try:
         await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-        
-        # Передаем промпт вместе с сообщением (Это работает всегда)
-        full_prompt = f"{SYSTEM_PROMPT}\n\nВопрос пользователя: {message.text}"
-        response = model.generate_content(full_prompt)
-        
+        response = model.generate_content(f"{SYSTEM_PROMPT}\nВопрос: {message.text}")
         await message.answer(response.text)
     except Exception as e:
-        await message.answer(f"⚠️ Ошибка Gemini: {e}")
-
-# =================================================
-# ЗАПУСК
-# =================================================
+        await message.answer(f"⚠️ Ошибка: {e}")
 
 @dp.message(CommandStart())
 async def cmd_start(message: types.Message):
@@ -381,13 +320,7 @@ async def cmd_start(message: types.Message):
 
 @dp.message(F.text == "🏆 Топ бирж")
 async def top_exchanges(message: types.Message):
-    text = (
-        "🔥 **ТОП БИРЖ (Проверено)**\n\n"
-        f"1. 🟡 **Bybit** — [Бонусы до $30,000]({REF_BYBIT})\n"
-        f"2. 🔵 **BingX** — [Без KYC]({REF_BINGX})\n"
-        f"3. ⚫️ **OKX** — [Надежность]({REF_OKX})"
-    )
-    await message.answer(text, disable_web_page_preview=True)
+    await message.answer(f"🔥 **ТОП БИРЖ:**\n\n1. 🟡 **Bybit** — [Бонус]({REF_BYBIT})\n2. 🔵 **BingX** — [Бонус]({REF_BINGX})\n3. ⚫️ **OKX** — [Бонус]({REF_OKX})", disable_web_page_preview=True)
 
 async def health_check(request): return web.Response(text="OK")
 async def start_web_server():
@@ -396,7 +329,7 @@ async def start_web_server():
     port = int(os.getenv("PORT", 8080))
     site = web.TCPSite(runner, '0.0.0.0', port); await site.start()
 
-# --- ИСПРАВЛЕННЫЙ KEEP_ALIVE (РАЗВЕРНУТЫЙ) ---
+# --- ИСПРАВЛЕНО ЗДЕСЬ (Развернул в нормальный вид) ---
 async def keep_alive():
     while True:
         await asyncio.sleep(600)
@@ -406,7 +339,7 @@ async def keep_alive():
                     pass
         except:
             pass
-# ---------------------------------------------
+# -----------------------------------------------------
 
 async def main():
     if not BOT_TOKEN: return
