@@ -46,7 +46,7 @@ try:
     if GEMINI_API_KEY:
         genai.configure(api_key=GEMINI_API_KEY)
         # --- ИЗМЕНЕНИЕ: ИСПОЛЬЗУЕМ GEMINI-PRO (ОНА РАБОТАЕТ ВЕЗДЕ) ---
-        model = genai.GenerativeModel('gemini-pro')
+        model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=SYSTEM_PROMPT)
 except:
     pass
 
