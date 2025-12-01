@@ -28,30 +28,27 @@ REF_OKX = "https://okx.com"
 
 dp = Dispatcher()
 bot = None
+model = None # Инициализируем переменную
+
 if BOT_TOKEN:
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
 
-# --- НАСТРОЙКА ИИ (МОЗГИ) ---
+# --- НАСТРОЙКА ИИ ---
 SYSTEM_PROMPT = """
-Ты — CryptoMate, профессиональный крипто-аналитик и финансовый консультант.
-Твоя цель: помогать пользователям разбираться в мире финансов.
-
-Твои правила:
-1. Отвечай кратко, четко и структурировано.
-2. Используй списки и эмодзи для удобства чтения.
-3. Если спрашивают прогноз цены — никогда не давай гарантий. Пиши: "Рынок непредсказуем, но технический анализ показывает...".
-4. Всегда напоминай про DYOR (Do Your Own Research).
-5. Твой тон: Дружелюбный, но экспертный.
-6. Отвечай на русском языке.
+Ты — CryptoMate, профессиональный крипто-аналитик.
+Отвечай кратко, четко, используй эмодзи.
+Твоя тема: Криптовалюты, финансы, трейдинг.
+На вопросы не по теме отвечай вежливо, что ты занимаешься только финансами.
 """
 
 try:
     if GEMINI_API_KEY:
         genai.configure(api_key=GEMINI_API_KEY)
-        # Подключаем системную инструкцию
         model = genai.GenerativeModel('gemini-1.5-flash', system_instruction=SYSTEM_PROMPT)
-except:
-    pass
+    else:
+        print("⚠️ GEMINI_API_KEY не найден в переменных окружения!")
+except Exception as e:
+    print(f"⚠️ Ошибка настройки Gemini: {e}")
 
 # --- СЛОВАРЬ ВАЛЮТ ---
 CURRENCY_MAP = {
@@ -77,6 +74,15 @@ CURRENCY_MAP = {
     'MONO': 'monobank', 'МОНО': 'monobank',
     'PRIVAT': 'privat24-uah', 'ПРИВАТ': 'privat24-uah',
     'KASPI': 'kaspi-bank', 'КАСПИ': 'kaspi-bank',
+}
+
+# --- СЛОВАРЬ ТИКЕРОВ ---
+CRYPTO_ALIASES = {
+    'БИТОК': 'BTC', 'БИТКОИН': 'BTC', 'BITCOIN': 'BTC',
+    'ЭФИР': 'ETH', 'ETHER': 'ETH', 'ETHEREUM': 'ETH',
+    'ТОН': 'TON', 'TONCOIN': 'TON', 'СОЛ': 'SOL', 
+    'ДОГИ': 'DOGE', 'РИПЛ': 'XRP', 'НОТ': 'NOT', 'NOTCOIN': 'NOT',
+    'ПЕПЕ': 'PEPE', 'ТЕЗЕР': 'USDT'
 }
 
 class BotStates(StatesGroup):
@@ -141,7 +147,6 @@ def resolve_bestchange_code(user_word, method):
         return 'visa-mastercard-usd'
     return 'tether-trc20'
 
-# --- API HELPERS ---
 async def get_raw_binance_price(symbol):
     url = f"https://api.binance.com/api/v3/ticker/price?symbol={symbol}"
     try:
@@ -196,7 +201,7 @@ async def get_market_analysis():
                 eth = next((x for x in valid_pairs if x['symbol'] == 'ETHUSDT'), None)
                 
                 mood = "🟢 Бычий" if float(btc['priceChangePercent']) > 0 else "🔴 Медвежий"
-                text = f"📊 **РЫНОК LIVE**\n\nBTC: `{float(btc['lastPrice']):,.0f}$`\nETH: `{float(eth['lastPrice']):,.0f}$`\nНастроение: {mood}\n\n🚀 **Лидеры роста:**\n"
+                text = f"📊 **РЫНОК LIVE**\n\n👑 BTC: `{float(btc['lastPrice']):,.0f}$`\n💎 ETH: `{float(eth['lastPrice']):,.0f}$`\n🌡 Настроение: {mood}\n\n🚀 **Лидеры роста:**\n"
                 for i, c in enumerate(gainers, 1): text += f"{i}. {c['symbol'][:-4]}: +{float(c['priceChangePercent']):.1f}%\n"
                 text += "\n🩸 **Аутсайдеры:**\n"
                 for c in losers: text += f"• {c['symbol'][:-4]}: {float(c['priceChangePercent']):.1f}%\n"
@@ -288,7 +293,7 @@ async def show_final_result(message, data, city):
     await message.answer("Меню:", reply_markup=main_keyboard)
 
 # =================================================
-# ЛОГИКА 2-4: КУРСЫ И РЫНОК
+# ЛОГИКА 2: КУРС КРИПТЫ
 # =================================================
 
 @dp.message(F.text == "🪙 Курс криптовалют")
@@ -301,15 +306,20 @@ async def crypto_rates_result(message: types.Message, state: FSMContext):
     if message.text == "❌ Отмена":
         await state.clear(); await message.answer("Отмена.", reply_markup=main_keyboard); return
     user_input = message.text.upper()
-    binance_pair = user_input.replace(" ", "") + "USDT"
+    ticker = CRYPTO_ALIASES.get(user_input, user_input) # Исправляем кириллицу
+    binance_pair = ticker.replace(" ", "") + "USDT"
     price = await get_raw_binance_price(binance_pair)
     if price:
-        await message.answer(f"📊 **{user_input}/USDT:** `{price:,.4f} $`", reply_markup=main_keyboard)
+        await message.answer(f"📊 **{ticker}/USDT:** `{price:,.4f} $`", reply_markup=main_keyboard)
     else:
-        p_cg, s_cg = await get_coingecko_price(user_input)
+        p_cg, s_cg = await get_coingecko_price(ticker)
         if p_cg: await message.answer(f"🦎 **{s_cg}/USD:** `{p_cg:,.6f} $`", reply_markup=main_keyboard)
         else: await message.answer("⚠️ Не нашел.", reply_markup=main_keyboard)
     await state.clear()
+
+# =================================================
+# ЛОГИКА 3: КУРС ФИАТА
+# =================================================
 
 @dp.message(F.text == "💵 Курс валют")
 async def fiat_rates_start(message: types.Message, state: FSMContext):
@@ -342,29 +352,22 @@ async def market_live(message: types.Message):
 
 @dp.message(F.text == "🧠 Крипто-ИИ")
 async def ai_intro(message: types.Message):
-    text = (
-        "🧠 **Я — Крипто-Интеллект.**\n\n"
-        "Я могу:\n"
-        "1. Объяснить любой термин (DeFi, Халвинг, P2P).\n"
-        "2. Рассказать о рисках и безопасности.\n"
-        "3. Проанализировать тренды.\n\n"
-        "👇 **Просто напиши мне свой вопрос прямо в чат!**"
-    )
-    await message.answer(text, reply_markup=main_keyboard)
+    await message.answer("🧠 Я слушаю! Задай любой вопрос про крипту.", reply_markup=main_keyboard)
 
-# ГЛАВНЫЙ МОЗГ (Обрабатывает любой текст, если это не команда)
 @dp.message()
 async def ai_chat(message: types.Message):
+    # ПРОВЕРКА: Если модель не загрузилась
+    if model is None:
+        await message.answer("⚠️ Ошибка: ИИ не подключен. Проверь GEMINI_API_KEY на Render.")
+        return
+
     try:
-        # Пропускаем служебные сообщения
-        if message.text.startswith("/"): return
-        
         await bot.send_chat_action(chat_id=message.chat.id, action="typing")
         response = model.generate_content(message.text)
         await message.answer(response.text)
     except Exception as e:
-        # Если ИИ сломался или не настроен
-        pass
+        # ВОТ ТУТ МЫ УВИДИМ РЕАЛЬНУЮ ОШИБКУ
+        await message.answer(f"⚠️ Ошибка Gemini: {e}")
 
 # =================================================
 # ЗАПУСК
