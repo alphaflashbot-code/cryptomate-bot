@@ -1,21 +1,19 @@
 import telebot
 from PIL import Image
 import os
-import sys
+from flask import Flask
+from threading import Thread
+import time
 
-# ПОЛУЧАЕМ ТОКЕН ИЗ ОКРУЖЕНИЯ (Безопасно)
-# Если переменной нет (например, при локальном запуске), программа выдаст ошибку
-TOKEN = os.environ.get('BOT_TOKEN')
-
-if not TOKEN:
-    print("Ошибка: Токен не найден! Установите переменную окружения BOT_TOKEN.")
-    sys.exit()
-
+# --- ЧАСТЬ 1: НАСТРОЙКИ БОТА ---
+# Лучше брать токен из переменных окружения (безопасность), 
+# но для начала можно оставить и так, или настроить Environment Variables в Render.
+TOKEN = 'ВАШ_ТОКЕН_ЗДЕСЬ' 
 bot = telebot.TeleBot(TOKEN)
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "Привет! Пришли мне фото, я сделаю из него PDF.")
+    bot.reply_to(message, "Привет! Я работаю на сервере Render! 🚀\nПришли фото для конвертации.")
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
@@ -37,14 +35,30 @@ def handle_photo(message):
         rgb_image.save(pdf_filename)
 
         with open(pdf_filename, 'rb') as doc:
-            bot.send_document(chat_id, doc, caption="Ваш PDF готов! 📄")
+            bot.send_document(chat_id, doc, caption="Готово! ✅")
 
         os.remove(src_filename)
         os.remove(pdf_filename)
 
     except Exception as e:
-        bot.send_message(message.chat.id, f"Ошибка: {e}")
+        bot.reply_to(message, f"Ошибка: {e}")
 
-# Запуск
-print("Бот запущен...")
-bot.infinity_polling()
+# --- ЧАСТЬ 2: ФЕЙКОВЫЙ ВЕБ-СЕРВЕР ДЛЯ RENDER ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "I am alive"
+
+def run():
+    # Render ожидает, что мы будем слушать порт 0.0.0.0
+    app.run(host='0.0.0.0', port=8080)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.start()
+
+# --- ЗАПУСК ---
+if __name__ == "__main__":
+    keep_alive() # Запускаем веб-сервер в отдельном потоке
+    bot.infinity_polling() # Запускаем бота
